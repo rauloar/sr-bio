@@ -1,0 +1,5 @@
+{
+  "name": "SR-BIO Security Manager",
+  "description": "A comprehensive bio-metric security management dashboard featuring user management, device monitoring, event logging, and system configuration.",
+  "requestFramePermissions": []
+}
