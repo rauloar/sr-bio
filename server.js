@@ -49,6 +49,7 @@ app.post('/api/devices/:id/info', async (req, res) => {
     console.log(`[SERVER] Intentando conectar a ${deviceConfig.ip}:${deviceConfig.port}...`);
 
     // Aumentamos timeouts para redes reales
+    // Constructor: ip, port, timeout, inport
     const zk = new ZKLib(deviceConfig.ip, deviceConfig.port, 10000, 4000);
 
     try {
@@ -57,55 +58,58 @@ app.post('/api/devices/:id/info', async (req, res) => {
         
         console.log(`[SERVER] Socket creado. Obteniendo información...`);
 
-        // Obtener Info General (Serial, Firmware, etc.)
+        // -- BLOQUE DEFENSIVO --
+        // Verificamos existencia de funciones antes de llamarlas para evitar crashes
+        
+        // 1. Obtener Info General
         let info = {};
         try {
             if (typeof zk.getInfo === 'function') {
                 info = await zk.getInfo();
+            } else {
+                console.warn("[SERVER] Método zk.getInfo no disponible.");
             }
         } catch (e) {
-            console.warn("[SERVER] Warning: zk.getInfo failed:", e.message);
+            console.warn("[SERVER] Error obteniendo Info:", e.message);
         }
 
-        // Obtener Hora (Safe check)
+        // 2. Obtener Hora (Causa frecuente de error 'not a function')
         let time = null;
         try {
             if (typeof zk.getTime === 'function') {
                 time = await zk.getTime();
             } else {
-                // Si la función no existe, logueamos advertencia pero no fallamos
-                console.warn("[SERVER] Warning: zk.getTime is not a function on this library version.");
+                console.warn("[SERVER] Método zk.getTime no disponible en esta versión de la librería.");
             }
         } catch (e) {
-            console.warn("[SERVER] Warning: zk.getTime failed:", e.message);
+            console.warn("[SERVER] Error obteniendo Hora:", e.message);
         }
         
-        // Fallback si no pudimos leer la hora del dispositivo
+        // Fallback visual para la hora
         if (!time) {
              const now = new Date();
-             time = now.toISOString().replace('T', ' ').substring(0, 19); // Formato simulado
-             console.log("[SERVER] Usando hora del servidor como fallback.");
+             time = now.toISOString().replace('T', ' ').substring(0, 19); 
         }
         
-        // Intentar obtener usuarios para el conteo
+        // 3. Obtener Usuarios
         let userCount = 0;
         try {
             if (typeof zk.getUsers === 'function') {
                 const users = await zk.getUsers();
-                userCount = users ? users.data.length : 0;
+                userCount = users && users.data ? users.data.length : 0;
             }
         } catch(err) {
-            console.warn("[SERVER] No se pudieron leer usuarios:", err.message);
+            console.warn("[SERVER] Error leyendo usuarios:", err.message);
         }
 
         // Desconectar
         try {
             await zk.disconnect();
         } catch (e) {
-            console.warn("[SERVER] Error al desconectar socket:", e.message);
+            console.warn("[SERVER] Error al desconectar:", e.message);
         }
 
-        console.log(`[SERVER] Éxito obteniendo datos de ${deviceConfig.ip}`);
+        console.log(`[SERVER] Datos obtenidos correctamente de ${deviceConfig.ip}`);
 
         res.json({
             success: true,
@@ -117,7 +121,7 @@ app.post('/api/devices/:id/info', async (req, res) => {
                 platform: info && info.platform ? info.platform : 'ZLM60',
                 capacity: {
                     userCount: userCount,
-                    userCapacity: 1000, // Valor por defecto si no se puede leer
+                    userCapacity: 1000,
                     logCount: 0, 
                     logCapacity: 100000,
                     fingerprintCount: 0, 
@@ -129,13 +133,13 @@ app.post('/api/devices/:id/info', async (req, res) => {
         });
 
     } catch (e) {
-        console.error(`[SERVER] Error fatal conectando con ${deviceConfig.ip}:`, e);
-        // Intentar desconectar si hubo error a mitad de camino
+        console.error(`[SERVER] Error fatal en conexión ${deviceConfig.ip}:`, e.message);
+        // Intentar limpieza
         try { await zk.disconnect(); } catch (err) {} 
 
         res.status(500).json({ 
             success: false, 
-            message: `Error de conexión ZK: ${e.message || "Timeout o destino inalcanzable"}` 
+            message: `Error de conexión: ${e.message || "No se pudo comunicar con el terminal"}` 
         });
     }
 });
