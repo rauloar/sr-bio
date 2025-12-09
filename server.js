@@ -1,3 +1,3 @@
-// This file is deprecated and no longer used.
-// The backend has been migrated to Python/FastAPI in the 'backend/' directory.
-// You can safely delete this file.
+// ARCHIVO OBSOLETO.
+// Por favor, elimina este archivo manualmente.
+// El backend ahora reside en la carpeta /backend y utiliza Python.

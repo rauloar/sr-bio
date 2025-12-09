@@ -12,15 +12,15 @@ const Settings: React.FC = () => {
   const [dbStatus, setDbStatus] = useState<any>(null);
   const [loadingDb, setLoadingDb] = useState(false);
 
-  // Estado inicial
+  // Estado inicial (Limpiado de referencias viejas a puerto 3000)
   const [settings, setSettings] = useState<SystemSettings>({
     communication: { 
         defaultPort: 4370, 
         connectionTimeout: 5, 
         retryCount: 1, 
         serverIp: '', 
-        serverPort: 8000,
-        apiUrl: 'http://localhost:8000/api',
+        serverPort: 8000, // Python Backend Default
+        apiUrl: 'http://localhost:8000/api', // Python Backend URL
         useMockApi: false
     },
     data: {
