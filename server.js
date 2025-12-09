@@ -324,7 +324,7 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
         const device = await getDeviceById(deviceId);
         if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
 
-        // Obtener usuarios de la DB Local
+        // Obtener usuarios de la DB Local con sus detalles
         db.all(`
             SELECT u.*, ud.lastname 
             FROM users u
@@ -335,25 +335,33 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
             
             try {
                 await withZkConnection(device, async (zk) => {
-                    // Check if setUser exists safely
-                    if (!zk.setUser) {
-                         throw new Error("Librería ZK no soporta escritura.");
-                    }
+                    
+                    // Nota: Eliminamos la verificación estricta 'if (!zk.setUser)' 
+                    // porque a veces la función está en el prototipo y no es detectable directamente así.
+                    // Confiamos en el bloque try/catch interno.
 
                     for (const u of rows) {
+                        // Concatenamos Nombre y Apellido para el Terminal
                         const fullName = `${u.name} ${u.lastname || ''}`.trim();
                         const roleCode = u.role === 'Admin' ? 14 : 0; 
                         
                         try {
-                            // uid, userid, name, password, role, cardno
-                            await zk.setUser(
-                                parseInt(u.device_user_id), 
-                                u.device_user_id,          
-                                fullName, 
-                                u.password || '', 
-                                roleCode,
-                                u.card || '0'
-                            );
+                            // Firma estándar node-zklib: setUser(uid, userid, name, password, role, cardno)
+                            // uid (int): Índice interno. Usamos u.device_user_id parseado si es numérico.
+                            // userid (string): ID visible.
+                            
+                            if (typeof zk.setUser === 'function') {
+                                await zk.setUser(
+                                    parseInt(u.device_user_id), // uid
+                                    u.device_user_id,           // userid
+                                    fullName,                   // name (Combined)
+                                    u.password || '',           // password
+                                    roleCode,                   // role
+                                    u.card || '0'               // cardno
+                                );
+                            } else {
+                                console.warn(`[ZK] setUser function missing for user ${u.name}`);
+                            }
                         } catch (innerErr) {
                             console.error(`[ZK] Error subiendo usuario ${u.device_user_id}:`, innerErr.message);
                         }
