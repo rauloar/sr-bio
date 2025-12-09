@@ -22,6 +22,9 @@ const Settings: React.FC = () => {
         serverPort: 0,
         apiUrl: 'http://localhost:3000/api',
         useMockApi: true
+    },
+    data: {
+        clearLogsAfterDownload: false
     }
   });
 
@@ -48,6 +51,16 @@ const Settings: React.FC = () => {
       ...prev,
       [section]: {
         ...prev[section],
+        [key]: value
+      }
+    }));
+  };
+  
+  const updateDataSetting = (key: string, value: any) => {
+    setSettings(prev => ({
+      ...prev,
+      data: {
+        ...prev.data,
         [key]: value
       }
     }));
@@ -134,7 +147,12 @@ const Settings: React.FC = () => {
                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-400">Descarga de Eventos</h3>
                  <div className="flex items-center">
                     <label className="flex cursor-pointer items-center gap-3">
-                       <input type="checkbox" className="h-5 w-5 rounded border-slate-600 bg-[#233648] text-primary focus:ring-offset-0" />
+                       <input 
+                           type="checkbox" 
+                           className="h-5 w-5 rounded border-slate-600 bg-[#233648] text-primary focus:ring-offset-0"
+                           checked={settings.data?.clearLogsAfterDownload || false}
+                           onChange={(e) => updateDataSetting('clearLogsAfterDownload', e.target.checked)}
+                       />
                        <span className="text-sm text-white">Borrar eventos de los dispositivos después de la descarga</span>
                     </label>
                  </div>

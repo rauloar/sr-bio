@@ -13,6 +13,9 @@ const DEFAULT_SETTINGS: SystemSettings = {
     serverPort: 3000,
     apiUrl: 'http://localhost:3000/api',
     useMockApi: false 
+  },
+  data: {
+      clearLogsAfterDownload: false
   }
 };
 
@@ -20,7 +23,8 @@ const loadSettings = (): SystemSettings => {
   const saved = localStorage.getItem(STORAGE_KEY_SETTINGS);
   if (saved) {
     try {
-      return JSON.parse(saved);
+      // Merge with default to ensure new keys exist
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
     } catch (e) {
       console.error("Error parsing settings", e);
     }
@@ -99,8 +103,9 @@ export const DeviceService = {
   },
 
   getDeviceInfo: async (deviceId: string): Promise<DeviceDiagnostics> => {
+      // Usamos el endpoint info-sync que actualiza modelo y mac
       try {
-        const res = await fetch(`${getApiUrl()}/devices/${deviceId}/info`, { 
+        const res = await fetch(`${getApiUrl()}/devices/${deviceId}/info-sync`, { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
@@ -118,7 +123,22 @@ export const DeviceService = {
         return {
             success: true,
             message: "Datos obtenidos",
-            data: json.data
+            data: {
+                deviceTime: json.data.deviceTime,
+                firmwareVersion: 'Updated',
+                serialNumber: 'Updated',
+                platform: 'ZK',
+                capacity: {
+                    userCount: json.data.capacity.userCount,
+                    userCapacity: 0,
+                    logCount: json.data.capacity.logCount,
+                    logCapacity: 0,
+                    fingerprintCount: 0,
+                    fingerprintCapacity: 0,
+                    faceCount: 0,
+                    faceCapacity: 0
+                }
+            }
         };
       } catch (err: any) {
         return { 
@@ -128,9 +148,9 @@ export const DeviceService = {
       }
   },
 
-  sync: async (deviceId: string): Promise<boolean> => {
+  syncInfoOnly: async (deviceId: string): Promise<boolean> => {
       try {
-        const res = await fetch(`${getApiUrl()}/devices/${deviceId}/sync`, { method: 'POST' });
+        const res = await fetch(`${getApiUrl()}/devices/${deviceId}/info-sync`, { method: 'POST' });
         return res.ok;
       } catch (err) { return false; }
   }
@@ -154,7 +174,6 @@ export const UserService = {
             avatar: '', 
             biometrics: { fingerprint: false, face: false }, 
             role: u.role === 14 ? 'Admin' : 'User',
-            // Extended fields
             lastname: u.lastname,
             address: u.address,
             city: u.city,
@@ -181,6 +200,20 @@ export const UserService = {
           console.error("Error updating user", e);
           return false;
       }
+  },
+
+  downloadFromTerminal: async (deviceId: string): Promise<{success: boolean, message: string}> => {
+      try {
+          const res = await fetch(`${getApiUrl()}/devices/${deviceId}/users/download`, { method: 'POST' });
+          return await res.json();
+      } catch(e) { return { success: false, message: "Error de conexión" }; }
+  },
+
+  uploadToTerminal: async (deviceId: string): Promise<{success: boolean, message: string}> => {
+      try {
+          const res = await fetch(`${getApiUrl()}/devices/${deviceId}/users/upload`, { method: 'POST' });
+          return await res.json();
+      } catch(e) { return { success: false, message: "Error de conexión" }; }
   }
 };
 
@@ -202,8 +235,8 @@ export const LogService = {
                 type: 'Success', 
                 eventName: 'Fichaje Asistencia',
                 user: log.deviceUserId,
-                userName: log.userName,       // Nuevo del backend
-                userLastname: log.userLastname, // Nuevo del backend
+                userName: log.userName,       
+                userLastname: log.userLastname, 
                 device: log.ip || 'Terminal', 
                 details: `Modo verificación: ${log.verifyType || 'FP/Pass'}`
             };
@@ -213,13 +246,29 @@ export const LogService = {
          return [];
     }
   },
+
+  downloadLogs: async (deviceId: string, clearLogs: boolean = false): Promise<{ success: boolean; message: string }> => {
+      try {
+          const res = await fetch(`${getApiUrl()}/devices/${deviceId}/logs/download`, { 
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ clearLogs }) 
+          });
+          return await res.json();
+      } catch(e) { return { success: false, message: "Error de conexión" }; }
+  },
   
-  downloadFromTerminals: async (): Promise<{ success: boolean; count: number; message: string }> => {
+  downloadFromTerminals: async (clearLogs: boolean): Promise<{ success: boolean; count: number; message: string }> => {
      try {
          const devices = await DeviceService.getAll();
          if(devices.length === 0) return { success: false, count: 0, message: "No hay dispositivos."};
          
-         const syncRes = await fetch(`${getApiUrl()}/devices/${devices[0].id}/sync`, { method: 'POST' });
+         // Llamar al endpoint especifico de logs download
+         const syncRes = await fetch(`${getApiUrl()}/devices/${devices[0].id}/logs/download`, { 
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ clearLogs }) 
+         });
          const syncJson = await syncRes.json();
          
          if (syncJson.success) {

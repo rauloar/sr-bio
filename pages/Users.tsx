@@ -41,13 +41,24 @@ const Users: React.FC = () => {
       fetchUsers();
   }, [selectedDevice]);
 
-  const handleSync = async () => {
+  const handleDownload = async () => {
       if(!selectedDevice) return;
-      if(!window.confirm("Esto descargará todos los usuarios del terminal a la base de datos local. ¿Continuar?")) return;
+      if(!window.confirm("Se descargarán los usuarios del terminal a la base de datos local. Los nombres locales no serán sobrescritos, pero se actualizarán tarjetas y contraseñas. ¿Continuar?")) return;
       
       setLoading(true);
-      await DeviceService.sync(selectedDevice);
+      const res = await UserService.downloadFromTerminal(selectedDevice);
+      alert(res.message);
       await fetchUsers();
+      setLoading(false);
+  };
+
+  const handleUpload = async () => {
+      if(!selectedDevice) return;
+      if(!window.confirm("Se subirán los usuarios locales al terminal. El 'Nombre' en el terminal será reemplazado por 'Nombre + Apellido' de la base de datos. ¿Continuar?")) return;
+
+      setLoading(true);
+      const res = await UserService.uploadToTerminal(selectedDevice);
+      alert(res.message);
       setLoading(false);
   };
 
@@ -74,7 +85,7 @@ const Users: React.FC = () => {
       setSaving(false);
       
       if(success) {
-          alert("Datos guardados correctamente");
+          alert("Datos guardados correctamente en BD Local. Recuerde 'Subir a Terminal' para actualizar el nombre en el dispositivo.");
           fetchUsers(); 
       } else {
           alert("Error al guardar cambios");
@@ -99,15 +110,27 @@ const Users: React.FC = () => {
                 >
                     {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
-                <button 
-                    onClick={handleSync}
-                    className="flex items-center gap-2 h-10 px-4 rounded-lg bg-primary text-white hover:bg-primary/90 font-bold text-sm"
-                    title="Sincronizar con Terminal"
-                    disabled={loading}
-                >
-                    <span className={`material-symbols-outlined ${loading ? 'animate-spin' : ''}`}>sync</span>
-                    {loading ? 'Sincronizando...' : 'Sincronizar'}
-                </button>
+                
+                <div className="flex rounded-lg bg-[#233648] p-1 border border-[#324d67]">
+                    <button 
+                        onClick={handleDownload}
+                        className="flex items-center gap-2 h-8 px-3 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 text-xs font-bold mr-1 disabled:opacity-50"
+                        title="Bajar usuarios del terminal a la PC"
+                        disabled={loading}
+                    >
+                        <span className="material-symbols-outlined text-sm">download</span>
+                        Bajar
+                    </button>
+                    <button 
+                        onClick={handleUpload}
+                        className="flex items-center gap-2 h-8 px-3 rounded bg-green-600/20 text-green-400 hover:bg-green-600/30 text-xs font-bold disabled:opacity-50"
+                        title="Subir usuarios de la PC al terminal (Actualiza Nombres)"
+                        disabled={loading}
+                    >
+                        <span className="material-symbols-outlined text-sm">upload</span>
+                        Subir
+                    </button>
+                </div>
             </div>
           </div>
           
@@ -115,7 +138,7 @@ const Users: React.FC = () => {
             {/* User List Panel */}
             <div className="flex flex-col gap-4 rounded-xl border border-slate-700 bg-[#111a22] p-6 lg:col-span-1">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-lg font-bold text-white">Usuarios</h2>
+                <h2 className="text-lg font-bold text-white">Usuarios Locales</h2>
                 <span className="text-xs text-slate-500">{users.length} encontrados</span>
               </div>
               
@@ -140,7 +163,7 @@ const Users: React.FC = () => {
                          Cargando...
                      </div>
                  ) : users.length === 0 ? (
-                     <div className="p-4 text-center text-slate-500">No hay usuarios. Pulsa Sincronizar.</div>
+                     <div className="p-4 text-center text-slate-500">No hay usuarios. Pulsa Bajar.</div>
                  ) : users.map((user) => (
                     <div 
                         key={user.id} 
@@ -192,7 +215,7 @@ const Users: React.FC = () => {
                                <h3 className="text-sm font-bold uppercase tracking-wider text-primary">Datos Personales</h3>
                                <div className="space-y-4">
                                    <div>
-                                       <label className="block text-sm font-medium text-slate-400 mb-1">Nombre (Terminal)</label>
+                                       <label className="block text-sm font-medium text-slate-400 mb-1">Nombre</label>
                                        <input 
                                          value={editForm.name}
                                          onChange={e => setEditForm({...editForm, name: e.target.value})}

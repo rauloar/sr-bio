@@ -84,4 +84,7 @@ export interface SystemSettings {
     apiUrl: string;
     useMockApi: boolean;
   };
+  data: {
+      clearLogsAfterDownload: boolean;
+  }
 }

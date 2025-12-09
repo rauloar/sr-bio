@@ -123,17 +123,23 @@ const getDeviceById = (id) => {
 };
 
 // --- ZK CONNECTION HELPER ---
+// Definida explicitamente para evitar ReferenceError
 const withZkConnection = async (deviceConfig, actionCallback) => {
-    console.log(`[SERVER] Conectando a ${deviceConfig.ip}...`);
-    const zk = new ZKLib(deviceConfig.ip, deviceConfig.port, 5000, 4000);
+    console.log(`[SERVER] Conectando a ${deviceConfig.ip}:${deviceConfig.port}...`);
+    const zk = new ZKLib(deviceConfig.ip, deviceConfig.port, 10000, 4000); 
     try {
         await zk.createSocket();
+        console.log(`[SERVER] Conectado a ${deviceConfig.ip}`);
         const result = await actionCallback(zk);
         return result;
     } catch (e) {
+        console.error(`[SERVER] Error ZK: ${e.message}`);
         throw e;
     } finally {
-        try { await zk.disconnect(); } catch (e) {}
+        try { 
+            await zk.disconnect(); 
+            console.log(`[SERVER] Desconectado de ${deviceConfig.ip}`);
+        } catch (e) {}
     }
 };
 
@@ -150,20 +156,16 @@ app.post('/api/auth/login', (req, res) => {
 
         // ESCENARIO 1: Primera vez (Base vacía) -> Crear Root
         if (row.count === 0) {
-            if (username.toLowerCase() !== 'root' && username.toLowerCase() !== 'admin') {
-                // Opcional: Forzar que el primer usuario sea admin/root, o permitir cualquiera
-            }
             const createdAt = new Date().toISOString();
             db.run("INSERT INTO auth_users (username, password, role, created_at) VALUES (?, ?, 'root', ?)", 
                 [username, password, createdAt], 
                 function(err) {
                     if (err) return res.status(500).json({ success: false, message: "Error al crear usuario root" });
-                    
                     return res.json({ 
                         success: true, 
                         message: "Usuario ROOT creado exitosamente. Bienvenido.",
                         user: { username, role: 'root' },
-                        token: 'session-token-root-created' // En prod usar JWT real
+                        token: 'session-token-root-created' 
                     });
                 }
             );
@@ -171,10 +173,7 @@ app.post('/api/auth/login', (req, res) => {
             // ESCENARIO 2: Login Normal
             db.get("SELECT * FROM auth_users WHERE username = ? AND password = ?", [username, password], (err, user) => {
                 if (err) return res.status(500).json({ success: false, message: err.message });
-                
-                if (!user) {
-                    return res.json({ success: false, message: "Credenciales inválidas." });
-                }
+                if (!user) return res.json({ success: false, message: "Credenciales inválidas." });
 
                 return res.json({ 
                     success: true, 
@@ -208,7 +207,9 @@ app.put('/api/devices/:id', (req, res) => {
     });
 });
 
-// 2. GET USUARIOS (JOIN users + user_details)
+// --- GESTIÓN DE USUARIOS ---
+
+// 2. GET USUARIOS (Local DB)
 app.get('/api/devices/:id/users', (req, res) => {
     const sql = `
         SELECT u.*, ud.lastname, ud.address, ud.city, ud.province, ud.cuit, ud.phone, ud.email
@@ -216,7 +217,6 @@ app.get('/api/devices/:id/users', (req, res) => {
         LEFT JOIN user_details ud ON u.uid = ud.user_uid
         WHERE u.device_id = ?
     `;
-    
     db.all(sql, [req.params.id], (err, rows) => {
         if (err) return res.status(500).json({ success: false, message: err.message });
         
@@ -226,7 +226,6 @@ app.get('/api/devices/:id/users', (req, res) => {
             role: r.role === 'Admin' ? 14 : 0, 
             card: r.card,
             uid: r.uid,
-            // Datos Extendidos
             lastname: r.lastname || '',
             address: r.address || '',
             city: r.city || '',
@@ -239,21 +238,18 @@ app.get('/api/devices/:id/users', (req, res) => {
     });
 });
 
-// 3. EDITAR USUARIO (Actualiza ambas tablas)
+// 3. EDITAR USUARIO (Local DB)
 app.put('/api/users/:uid', (req, res) => {
     const uid = req.params.uid;
-    const { 
-        name, role, // Tabla users
-        lastname, address, city, province, cuit, phone, email // Tabla user_details
-    } = req.body;
+    const { name, role, lastname, address, city, province, cuit, phone, email } = req.body;
 
     db.serialize(() => {
-        // 1. Actualizar tabla principal
+        // Actualizar tabla principal
         db.run("UPDATE users SET name = ?, role = ? WHERE uid = ?", [name, role, uid], (err) => {
             if (err) console.error("Error updating users table", err);
         });
 
-        // 2. Upsert tabla detalles (Insert or Replace)
+        // Upsert tabla detalles
         const sqlDetails = `
             INSERT INTO user_details (user_uid, lastname, address, city, province, cuit, phone, email)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -274,7 +270,88 @@ app.put('/api/users/:uid', (req, res) => {
     });
 });
 
-// 4. GET LOGS (JOIN user_details)
+// 3.1 DESCARGAR USUARIOS (ZK -> DB)
+app.post('/api/devices/:id/users/download', async (req, res) => {
+    const deviceId = req.params.id;
+    try {
+        const device = await getDeviceById(deviceId);
+        if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
+
+        const count = await withZkConnection(device, async (zk) => {
+            const users = await zk.getUsers();
+            if (users && users.data) {
+                const stmt = db.prepare(`
+                    INSERT INTO users (device_user_id, name, role, password, card, device_id) 
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(device_user_id, device_id) DO UPDATE SET 
+                        card = excluded.card,
+                        password = excluded.password
+                        -- NOTA: No sobrescribimos el nombre si ya existe localmente para preservar ediciones, 
+                        -- o podriamos decidir sobrescribirlo. Por ahora solo actualizamos card/pass.
+                `);
+                
+                users.data.forEach(u => {
+                    const roleName = u.role === 14 ? 'Admin' : 'User';
+                    stmt.run(u.userId, u.name, roleName, u.password, u.cardno, deviceId);
+                });
+                stmt.finalize();
+                return users.data.length;
+            }
+            return 0;
+        });
+        res.json({ success: true, message: `Se descargaron ${count} usuarios del terminal.` });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// 3.2 SUBIR USUARIOS (DB -> ZK)
+app.post('/api/devices/:id/users/upload', async (req, res) => {
+    const deviceId = req.params.id;
+    try {
+        const device = await getDeviceById(deviceId);
+        if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
+
+        // Obtener usuarios de la DB Local
+        db.all(`
+            SELECT u.*, ud.lastname 
+            FROM users u
+            LEFT JOIN user_details ud ON u.uid = ud.user_uid
+            WHERE u.device_id = ?
+        `, [deviceId], async (err, rows) => {
+            if (err) return res.status(500).json({ success: false, message: err.message });
+            
+            try {
+                await withZkConnection(device, async (zk) => {
+                    for (const u of rows) {
+                        // Concatenar Nombre + Apellido para el terminal
+                        const fullName = `${u.name} ${u.lastname || ''}`.trim();
+                        // 14 = Admin, 0 = User
+                        const roleCode = u.role === 'Admin' ? 14 : 0; 
+                        
+                        await zk.setUser(
+                            u.device_user_id, 
+                            u.card || '0', 
+                            fullName, 
+                            u.password || '', 
+                            roleCode
+                        );
+                    }
+                });
+                res.json({ success: true, message: `Se enviaron ${rows.length} usuarios al terminal.` });
+            } catch (zkErr) {
+                res.status(500).json({ success: false, message: "Error escribiendo en terminal: " + zkErr.message });
+            }
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+
+// --- GESTIÓN DE LOGS ---
+
+// 4. GET LOGS (Local DB)
 app.get('/api/devices/:id/logs', (req, res) => {
     db.all(`
         SELECT l.*, u.name as user_name, ud.lastname as user_lastname
@@ -298,31 +375,16 @@ app.get('/api/devices/:id/logs', (req, res) => {
     });
 });
 
-// 5. SINCRONIZAR
-app.post('/api/devices/:id/sync', async (req, res) => {
+// 4.1 DESCARGAR LOGS (ZK -> DB) Y OPCIONALMENTE BORRAR
+app.post('/api/devices/:id/logs/download', async (req, res) => {
     const deviceId = req.params.id;
+    const { clearLogs } = req.body; // Flag recibido del frontend
+
     try {
         const device = await getDeviceById(deviceId);
         if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
 
-        await withZkConnection(device, async (zk) => {
-            const users = await zk.getUsers();
-            if (users && users.data) {
-                const stmt = db.prepare(`
-                    INSERT INTO users (device_user_id, name, role, password, card, device_id) 
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(device_user_id, device_id) DO UPDATE SET 
-                        card = excluded.card,
-                        password = excluded.password
-                `);
-                
-                users.data.forEach(u => {
-                    const roleName = u.role === 14 ? 'Admin' : 'User';
-                    stmt.run(u.userId, u.name, roleName, u.password, u.cardno, deviceId);
-                });
-                stmt.finalize();
-            }
-
+        const count = await withZkConnection(device, async (zk) => {
             const logs = await zk.getAttendances();
             if (logs && logs.data) {
                 const stmt = db.prepare("INSERT OR IGNORE INTO logs (user_id, device_id, timestamp, verify_type, status) VALUES (?, ?, ?, ?, ?)");
@@ -332,44 +394,78 @@ app.post('/api/devices/:id/sync', async (req, res) => {
                 });
                 stmt.finalize();
             }
+            
+            // BORRADO SEGURO: Solo si el flag es true
+            if (clearLogs === true) {
+                console.log(`[SERVER] Borrando logs en ${device.ip} a petición del usuario.`);
+                await zk.clearAttendanceLog();
+            }
+
+            return logs?.data?.length || 0;
         });
-        res.json({ success: true, message: "Sincronización completada. Datos locales preservados." });
+
+        res.json({ success: true, message: `Se descargaron ${count} registros.${clearLogs ? ' Registros borrados del terminal.' : ''}` });
     } catch (e) {
         console.error(e);
         res.status(500).json({ success: false, message: e.message || "Error de conexión" });
     }
 });
 
-// Info Endpoint
-app.post('/api/devices/:id/info', async (req, res) => {
+
+// --- INFO Y MANTENIMIENTO ---
+
+// 5. SINCRONIZAR INFO (Hora, Capacidad, Modelo, MAC)
+app.post('/api/devices/:id/info-sync', async (req, res) => {
+    const deviceId = req.params.id;
     try {
-        const device = await getDeviceById(req.params.id);
-        const data = await withZkConnection(device, async (zk) => {
-            const info = await zk.getInfo().catch(() => ({}));
+        const device = await getDeviceById(deviceId);
+        if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
+
+        const info = await withZkConnection(device, async (zk) => {
+            const devInfo = await zk.getInfo().catch(() => ({}));
             const time = await zk.getTime().catch(() => null);
             const users = await zk.getUsers().catch(() => ({ data: [] }));
+            const logs = await zk.getAttendances().catch(() => ({ data: [] }));
+            const capacity = await zk.getFreeSize().catch(() => ({})); // Algunos modelos
+
+            // Sync Hora
+            // await zk.setTime(new Date()); // Opcional: Forzar hora PC
+
             return {
-                deviceTime: time || new Date().toISOString(),
-                firmwareVersion: info?.firmwareVersion || 'Unknown',
-                serialNumber: info?.serialNumber || 'Unknown',
-                platform: info?.platform || 'ZLM60',
-                capacity: {
-                    userCount: users?.data?.length || 0,
-                    userCapacity: 1000,
-                    logCount: 0, 
-                    logCapacity: 100000,
-                    fingerprintCount: 0, 
-                    fingerprintCapacity: 1000,
-                    faceCount: 0,
-                    faceCapacity: 500
+                time,
+                info: devInfo,
+                counts: {
+                    users: users?.data?.length || 0,
+                    logs: logs?.data?.length || 0
                 }
             };
         });
-        res.json({ success: true, data });
+
+        // Actualizar datos técnicos en DB
+        if (info.info) {
+             const mac = info.info.macAddress || device.mac;
+             const model = info.info.productTime || info.info.productName || 'ZK Terminal'; // ZKLib a veces devuelve nombres raros
+             db.run("UPDATE devices SET mac = ?, model = ?, status = 'Online', last_seen = ? WHERE id = ?", 
+                 [mac, model, new Date().toLocaleString(), deviceId]);
+        }
+
+        res.json({ 
+            success: true, 
+            message: "Información sincronizada correctamente.",
+            data: {
+                deviceTime: info.time,
+                capacity: {
+                    userCount: info.counts.users,
+                    logCount: info.counts.logs
+                }
+            }
+        });
+
     } catch (e) {
         res.status(500).json({ success: false, message: e.message });
     }
 });
+
 
 // DB Management Endpoints
 app.get('/api/db/status', (req, res) => {
@@ -408,7 +504,7 @@ app.post('/api/db/optimize', (req, res) => {
     });
 });
 
-// Background Monitor
+// Background Monitor (Ping simple)
 const pingDevice = (host, port, timeout = 3000) => {
     return new Promise((resolve) => {
         const socket = new net.Socket();
@@ -426,8 +522,8 @@ const monitorDevices = async () => {
         for (const device of devices) {
             const isOnline = await pingDevice(device.ip, device.port);
             const status = isOnline ? 'Online' : 'Offline';
-            const lastSeen = isOnline ? new Date().toLocaleString() : device.last_seen;
-            db.run("UPDATE devices SET status = ?, last_seen = ? WHERE id = ?", [status, lastSeen, device.id]);
+            // Solo actualizamos el estado, no pisamos datos técnicos
+            db.run("UPDATE devices SET status = ? WHERE id = ?", [status, device.id]);
         }
     } catch (e) {}
 };

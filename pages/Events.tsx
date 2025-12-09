@@ -36,7 +36,7 @@ const Events: React.FC = () => {
   const handleSyncAndFetch = async () => {
       setLoading(true);
       if(selectedDevice) {
-         await DeviceService.sync(selectedDevice);
+         await LogService.downloadLogs(selectedDevice);
          await fetchLogs();
       }
       setLoading(false);

@@ -16,6 +16,9 @@ const Devices: React.FC = () => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string>('');
   const [deviceResponse, setDeviceResponse] = useState<any | null>(null);
+  
+  // Estado Mock Live Capture
+  const [liveCapture, setLiveCapture] = useState(false);
 
   useEffect(() => {
     const fetchDevices = async () => {
@@ -73,10 +76,11 @@ const Devices: React.FC = () => {
       }
   };
 
-  const handleSync = async (device: Device) => {
-      if(!window.confirm(`¿Iniciar sincronización con ${device.name}?\n\nEsto conectará al dispositivo, actualizará usuarios y descargará logs nuevos.`)) return;
-      DeviceService.sync(device.id);
-      alert('Sincronización iniciada en segundo plano.');
+  const handleSyncInfo = async (device: Device) => {
+      if(!window.confirm(`¿Sincronizar Hora y Capacidad con ${device.name}?`)) return;
+      const success = await DeviceService.syncInfoOnly(device.id);
+      if(success) alert('Hora y datos sincronizados.');
+      else alert('Error de sincronización.');
   };
 
   const handleGetRealInfo = async () => {
@@ -225,11 +229,15 @@ const Devices: React.FC = () => {
                         Conectar y Obtener Info
                     </button>
                     <div className="grid grid-cols-2 gap-3">
-                        <button onClick={() => {}} className="flex items-center justify-center gap-2 rounded-lg bg-[#233648] py-3 text-sm font-medium text-white hover:bg-[#344a60]">
-                            <span className="material-symbols-outlined text-lg">power_settings_new</span> Reiniciar
+                         <button 
+                            onClick={() => setLiveCapture(!liveCapture)}
+                            className={`flex items-center justify-center gap-2 rounded-lg py-3 text-sm font-medium text-white transition-all ${liveCapture ? 'bg-red-600 hover:bg-red-500 animate-pulse' : 'bg-[#233648] hover:bg-[#344a60]'}`}
+                         >
+                            <span className="material-symbols-outlined text-lg">videocam</span> 
+                            {liveCapture ? 'Desconectar' : 'Live Mode'}
                         </button>
-                        <button onClick={() => handleSync(selectedDevice)} className="flex items-center justify-center gap-2 rounded-lg bg-[#233648] py-3 text-sm font-medium text-white hover:bg-[#344a60]">
-                            <span className="material-symbols-outlined text-lg">sync</span> Sincronizar
+                        <button onClick={() => handleSyncInfo(selectedDevice)} className="flex items-center justify-center gap-2 rounded-lg bg-[#233648] py-3 text-sm font-medium text-white hover:bg-[#344a60]">
+                            <span className="material-symbols-outlined text-lg">sync</span> Sync Info
                         </button>
                     </div>
                 </div>
@@ -257,8 +265,8 @@ const Devices: React.FC = () => {
                         <span className="font-mono text-white">{selectedDevice.mac}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Firmware (Cache)</span>
-                        <span className="font-medium text-white">{selectedDevice.firmware}</span>
+                        <span className="text-slate-400">Modelo Detectado</span>
+                        <span className="font-medium text-white">{selectedDevice.model}</span>
                       </div>
                   </div>
                 </div>

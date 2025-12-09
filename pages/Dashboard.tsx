@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { LogService, AuthService, DeviceService } from '../services/api';
+import { LogService, AuthService, DeviceService, SettingsService } from '../services/api';
 import { Device } from '../types';
 
 const Dashboard: React.FC = () => {
@@ -21,7 +21,18 @@ const Dashboard: React.FC = () => {
 
   const handleDownloadLogs = async () => {
     setIsDownloading(true);
-    const result = await LogService.downloadFromTerminals();
+    // Leer configuración para saber si borrar
+    const settings = await SettingsService.get();
+    const shouldClear = settings.data?.clearLogsAfterDownload || false;
+    
+    if(shouldClear) {
+        if(!confirm("ADVERTENCIA: La configuración indica que se BORRARÁN los logs del terminal después de descargarlos. ¿Continuar?")) {
+            setIsDownloading(false);
+            return;
+        }
+    }
+
+    const result = await LogService.downloadFromTerminals(shouldClear);
     setIsDownloading(false);
 
     if (result.success) {
