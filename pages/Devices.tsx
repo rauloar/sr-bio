@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { Device, DeviceDiagnostics } from '../types';
 import { DeviceService } from '../services/api';
@@ -12,9 +11,11 @@ const Devices: React.FC = () => {
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string>('');
-  const [deviceRealInfo, setDeviceRealInfo] = useState<DeviceDiagnostics | null>(null);
+  
+  // Estado flexible para guardar respuesta (éxito o error con detalles extra)
+  const [deviceResponse, setDeviceResponse] = useState<any | null>(null);
 
-  // Load data
+  // Load data (Initial)
   useEffect(() => {
     const fetchDevices = async () => {
       setLoading(true);
@@ -24,6 +25,32 @@ const Devices: React.FC = () => {
       setLoading(false);
     };
     fetchDevices();
+  }, []);
+
+  // Polling for Status Updates (Every 10 seconds)
+  useEffect(() => {
+    const intervalId = setInterval(async () => {
+        // No set loading here to avoid UI flickering
+        const data = await DeviceService.getAll();
+        
+        // Preserve selection or update it if data changed significantly, 
+        // but for now just updating the list is enough.
+        setDevices(prevDevices => {
+            // Optimización: Solo actualizar si hay cambios reales en status/lastSeen para evitar re-renders innecesarios?
+            // React maneja el diffing, así que pasamos la nueva lista.
+            return data;
+        });
+        
+        // Update selected device object reference if it exists in the new list
+        setSelectedDevice(prev => {
+            if(!prev) return null;
+            const updated = data.find(d => d.id === prev.id);
+            return updated || prev;
+        });
+
+    }, 10000); 
+
+    return () => clearInterval(intervalId);
   }, []);
 
   const handleSync = async (device: Device) => {
@@ -36,29 +63,28 @@ const Devices: React.FC = () => {
       if (!selectedDevice) return;
       setIsInfoModalOpen(true);
       setIsConnecting(true);
-      setDeviceRealInfo(null);
-      setConnectionStep('Iniciando conexión TCP/UDP...');
+      setDeviceResponse(null);
+      setConnectionStep('Iniciando handshake ZKTeco...');
 
-      // Simulación visual de los pasos de node-zklib en el frontend
-      // En una app real, esto podría venir vía socket o simplemente un mensaje de carga general
-      const timer1 = setTimeout(() => setConnectionStep('Deshabilitando terminal...'), 800);
-      const timer2 = setTimeout(() => setConnectionStep('Leyendo memoria y reloj...'), 1500);
+      // Simulación visual de progreso
+      const timer1 = setTimeout(() => setConnectionStep('Conectando socket TCP...'), 800);
+      const timer2 = setTimeout(() => setConnectionStep('Leyendo datos biométricos...'), 2000);
 
       try {
           const result = await DeviceService.getDeviceInfo(selectedDevice.id);
           clearTimeout(timer1);
           clearTimeout(timer2);
-          setConnectionStep('Habilitando terminal y desconectando...');
+          setConnectionStep('Procesando respuesta...');
           
           setTimeout(() => {
-             setDeviceRealInfo(result);
+             setDeviceResponse(result);
              setIsConnecting(false);
           }, 500);
           
       } catch (e) {
-          setDeviceRealInfo({
+          setDeviceResponse({
               success: false,
-              message: "Error de comunicación con el servidor API."
+              message: "Error crítico en cliente Frontend."
           });
           setIsConnecting(false);
       }
@@ -123,16 +149,15 @@ const Devices: React.FC = () => {
                     >
                         <td className="p-4"><input type="checkbox" checked={selectedDevice?.id === dev.id} readOnly className="rounded border-slate-500 bg-[#233648] text-primary focus:ring-primary" /></td>
                         <td className="px-6 py-4">
-                            {/* El estado aquí es estático de la BD, no real-time ping */}
-                            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-700 px-2 py-1 text-xs font-medium text-slate-300">
-                                <span className="size-1.5 rounded-full bg-slate-400"></span>
-                                Standby
+                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium ${dev.status === 'Online' ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
+                                <span className={`size-1.5 rounded-full ${dev.status === 'Online' ? 'bg-green-500' : 'bg-red-500'} ${dev.status === 'Online' ? 'animate-pulse' : ''}`}></span>
+                                {dev.status}
                             </span>
                         </td>
                         <td className="px-6 py-4 font-medium text-white">{dev.name}</td>
                         <td className="px-6 py-4 font-mono text-slate-400">{dev.ip}</td>
                         <td className="px-6 py-4">{dev.model}</td>
-                        <td className="px-6 py-4">{dev.lastSeen}</td>
+                        <td className="px-6 py-4 font-mono text-xs">{dev.lastSeen}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -151,6 +176,7 @@ const Devices: React.FC = () => {
                         src={selectedDevice.image} 
                         alt="Terminal Biométrico" 
                     />
+                    <div className={`absolute bottom-0 right-0 h-4 w-4 rounded-full border-2 border-[#233648] ${selectedDevice.status === 'Online' ? 'bg-green-500' : 'bg-red-500'}`}></div>
                 </div>
                 
                 <div className="text-center">
@@ -234,13 +260,10 @@ const Devices: React.FC = () => {
                              <div className="flex flex-col items-center gap-2 text-center">
                                 <p className="text-lg font-bold text-white">Conectando con Terminal...</p>
                                 <p className="text-sm text-primary animate-pulse">{connectionStep}</p>
-                                <p className="text-xs text-slate-500 max-w-xs mt-2">
-                                    El sistema está conectando, deshabilitando el dispositivo para lectura segura y volviendo a habilitar.
-                                </p>
                              </div>
                           </div>
-                      ) : deviceRealInfo ? (
-                          deviceRealInfo.success && deviceRealInfo.data ? (
+                      ) : deviceResponse ? (
+                          deviceResponse.success && deviceResponse.data && !deviceResponse.data.hint ? (
                               <div className="flex flex-col gap-6 animate-in slide-in-from-bottom-4 duration-300">
                                   
                                   {/* Cabecera Estado */}
@@ -256,13 +279,13 @@ const Devices: React.FC = () => {
                                   <div className="grid grid-cols-2 gap-4">
                                       <div className="rounded-lg bg-[#192633] p-4 border border-slate-700">
                                           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Hora del Dispositivo</span>
-                                          <div className="mt-1 text-lg font-mono font-bold text-white">{deviceRealInfo.data.deviceTime.split(' ')[1]}</div>
-                                          <div className="text-xs text-slate-500">{deviceRealInfo.data.deviceTime.split(' ')[0]}</div>
+                                          <div className="mt-1 text-lg font-mono font-bold text-white">{deviceResponse.data.deviceTime.split(' ')[1]}</div>
+                                          <div className="text-xs text-slate-500">{deviceResponse.data.deviceTime.split(' ')[0]}</div>
                                       </div>
                                       <div className="rounded-lg bg-[#192633] p-4 border border-slate-700">
                                           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Firmware</span>
-                                          <div className="mt-1 text-sm font-bold text-white truncate" title={deviceRealInfo.data.firmwareVersion}>{deviceRealInfo.data.firmwareVersion}</div>
-                                          <div className="text-xs text-slate-500">{deviceRealInfo.data.platform}</div>
+                                          <div className="mt-1 text-sm font-bold text-white truncate" title={deviceResponse.data.firmwareVersion}>{deviceResponse.data.firmwareVersion}</div>
+                                          <div className="text-xs text-slate-500">{deviceResponse.data.platform}</div>
                                       </div>
                                   </div>
 
@@ -274,12 +297,12 @@ const Devices: React.FC = () => {
                                       <div>
                                           <div className="flex justify-between text-xs mb-1">
                                               <span className="text-slate-300">Usuarios</span>
-                                              <span className="text-slate-400">{deviceRealInfo.data.capacity.userCount} / {deviceRealInfo.data.capacity.userCapacity}</span>
+                                              <span className="text-slate-400">{deviceResponse.data.capacity.userCount} / {deviceResponse.data.capacity.userCapacity}</span>
                                           </div>
                                           <div className="h-2 w-full rounded-full bg-slate-700 overflow-hidden">
                                               <div 
                                                 className="h-full bg-blue-500 transition-all duration-500" 
-                                                style={{ width: `${calcPercent(deviceRealInfo.data.capacity.userCount, deviceRealInfo.data.capacity.userCapacity)}%` }}
+                                                style={{ width: `${calcPercent(deviceResponse.data.capacity.userCount, deviceResponse.data.capacity.userCapacity)}%` }}
                                               ></div>
                                           </div>
                                       </div>
@@ -288,12 +311,12 @@ const Devices: React.FC = () => {
                                       <div>
                                           <div className="flex justify-between text-xs mb-1">
                                               <span className="text-slate-300">Huellas</span>
-                                              <span className="text-slate-400">{deviceRealInfo.data.capacity.fingerprintCount} / {deviceRealInfo.data.capacity.fingerprintCapacity}</span>
+                                              <span className="text-slate-400">{deviceResponse.data.capacity.fingerprintCount} / {deviceResponse.data.capacity.fingerprintCapacity}</span>
                                           </div>
                                           <div className="h-2 w-full rounded-full bg-slate-700 overflow-hidden">
                                               <div 
                                                 className="h-full bg-purple-500 transition-all duration-500" 
-                                                style={{ width: `${calcPercent(deviceRealInfo.data.capacity.fingerprintCount, deviceRealInfo.data.capacity.fingerprintCapacity)}%` }}
+                                                style={{ width: `${calcPercent(deviceResponse.data.capacity.fingerprintCount, deviceResponse.data.capacity.fingerprintCapacity)}%` }}
                                               ></div>
                                           </div>
                                       </div>
@@ -302,12 +325,12 @@ const Devices: React.FC = () => {
                                       <div>
                                           <div className="flex justify-between text-xs mb-1">
                                               <span className="text-slate-300">Registros (Logs)</span>
-                                              <span className="text-slate-400">{deviceRealInfo.data.capacity.logCount} / {deviceRealInfo.data.capacity.logCapacity}</span>
+                                              <span className="text-slate-400">{deviceResponse.data.capacity.logCount} / {deviceResponse.data.capacity.logCapacity}</span>
                                           </div>
                                           <div className="h-2 w-full rounded-full bg-slate-700 overflow-hidden">
                                               <div 
-                                                className={`h-full transition-all duration-500 ${calcPercent(deviceRealInfo.data.capacity.logCount, deviceRealInfo.data.capacity.logCapacity) > 90 ? 'bg-red-500' : 'bg-green-500'}`} 
-                                                style={{ width: `${calcPercent(deviceRealInfo.data.capacity.logCount, deviceRealInfo.data.capacity.logCapacity)}%` }}
+                                                className={`h-full transition-all duration-500 ${calcPercent(deviceResponse.data.capacity.logCount, deviceResponse.data.capacity.logCapacity) > 90 ? 'bg-red-500' : 'bg-green-500'}`} 
+                                                style={{ width: `${calcPercent(deviceResponse.data.capacity.logCount, deviceResponse.data.capacity.logCapacity)}%` }}
                                               ></div>
                                           </div>
                                       </div>
@@ -317,11 +340,27 @@ const Devices: React.FC = () => {
                           ) : (
                               <div className="flex flex-col items-center animate-in zoom-in duration-300 py-6">
                                   <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-500/20 text-red-500">
-                                      <span className="material-symbols-outlined text-4xl">wifi_off</span>
+                                      <span className="material-symbols-outlined text-4xl">cloud_off</span>
                                   </div>
-                                  <h4 className="text-xl font-bold text-white mb-2">Error de Conexión</h4>
-                                  <p className="text-slate-400 text-center text-sm px-4">{deviceRealInfo.message}</p>
-                                  <button onClick={handleGetRealInfo} className="mt-6 text-primary hover:underline text-sm font-bold">Reintentar</button>
+                                  <h4 className="text-xl font-bold text-white mb-2">Fallo en la Conexión</h4>
+                                  <p className="text-white bg-red-500/10 border border-red-500/20 p-3 rounded-lg text-center text-sm font-medium px-4 mb-4 w-full">
+                                    {deviceResponse.message}
+                                  </p>
+                                  
+                                  {deviceResponse.data?.hint && (
+                                     <div className="w-full bg-[#192633] rounded-lg p-4 text-left border border-slate-700">
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Posible Solución:</p>
+                                        <p className="text-sm text-slate-300 flex items-start gap-2">
+                                            <span className="material-symbols-outlined text-yellow-500 text-lg">lightbulb</span>
+                                            {deviceResponse.data.hint}
+                                        </p>
+                                     </div>
+                                  )}
+
+                                  <button onClick={handleGetRealInfo} className="mt-6 text-primary hover:underline text-sm font-bold flex items-center gap-1">
+                                    <span className="material-symbols-outlined">refresh</span>
+                                    Reintentar Conexión
+                                  </button>
                               </div>
                           )
                       ) : null}

@@ -1,9 +1,9 @@
-import { Device, User, SystemSettings, DeviceDiagnostics } from '../types';
+import { Device, User, SystemSettings, DeviceDiagnostics, EventLog } from '../types';
 
 // --- CONFIGURATION ---
 const STORAGE_KEY_SETTINGS = 'sr_bio_settings';
 
-// Default configuration sets useMockApi to FALSE to try real connection immediately
+// Default to real API usage
 const DEFAULT_SETTINGS: SystemSettings = {
   communication: { 
     defaultPort: 4370, 
@@ -33,31 +33,23 @@ let CURRENT_SETTINGS = loadSettings();
 // --- HELPERS ---
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const getApiUrl = () => CURRENT_SETTINGS.communication.apiUrl;
-
-// --- MOCK DATA FALLBACKS (Solo usados si falla el backend y se activa el modo mock manualmente) ---
 const TERMINAL_IMG = "https://cdn-icons-png.flaticon.com/512/9638/9638162.png";
-const MOCK_DEVICES: Device[] = [
-  { id: 'mock-1', name: 'Mock Device', ip: '0.0.0.0', port: 4370, model: 'Virtual', firmware: 'v1', status: 'Offline', lastSeen: '-', mac: '', gateway: '', subnet: '', image: TERMINAL_IMG },
-];
-
-const MOCK_USERS: User[] = [
-    { id: '1001', name: 'Usuario Demo', email: 'demo@example.com', department: 'IT', status: 'Active', avatar: '', biometrics: { fingerprint: true, face: false }, role: 'User' },
-];
 
 // --- SERVICES ---
 
 export const AuthService = {
   login: async (username: string, password: string): Promise<{ success: boolean; token?: string; user?: any; message?: string }> => {
+    // Auth sigue siendo simulado porque no tenemos DB de usuarios web
     return new Promise((resolve) => {
       setTimeout(() => {
         if (username === 'admin' && password === 'password') {
-          const fakeToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.mock';
+          const fakeToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.real';
           const user = { name: 'Administrador', avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBi2BiXGn43U3J2AFbqw90t5qoo1lHUOCNW3o7T7kCZTc7gPkt4-1DA_y2D4_hOdl_PojC89G2FD-2AYcArIp0-T0T_kJlgFQejqC5T1IuC5HYV9xVfGPe5KK3n_0liSq6dWcF-jMQyi4_pIfHqFPmq0N-1XXm58Ac6SQFQjJTqi_RCsFkSezSfJFW81wMsfwQuJlOv6FGacn4-soEoLtv_C-0VwAem5MRC9ENAFWeLkCLvz6hlmtsYcmiv5Wjjg1SyWaBQxmny9h0' };
           localStorage.setItem('sr_bio_token', fakeToken);
           localStorage.setItem('sr_bio_user', JSON.stringify(user));
           resolve({ success: true, token: fakeToken, user });
         } else {
-          resolve({ success: false, message: 'Credenciales inválidas' });
+          resolve({ success: false, message: 'Credenciales inválidas (admin/password)' });
         }
       }, 500);
     });
@@ -80,102 +72,122 @@ export const AuthService = {
 
 export const DeviceService = {
   getAll: async (): Promise<Device[]> => {
-    // Intentar conectar con el backend real por defecto
-    if (!CURRENT_SETTINGS.communication.useMockApi) {
-      try {
-        const res = await fetch(`${getApiUrl()}/devices`);
-        if (!res.ok) throw new Error('Failed to fetch from backend');
-        return await res.json();
-      } catch (err) {
-        console.warn("No se pudo conectar con el Backend en localhost:3000. Asegúrate de correr 'npm run server'.", err);
-        // Si falla la conexión, devolvemos array vacío para que el usuario vea que algo pasa, 
-        // o podríamos devolver mock si quisiéramos ser más permisivos.
-        // Devolvemos vacío con un item de error visual
-        return [{
-            id: 'error', 
-            name: 'Error de Conexión Backend', 
-            ip: 'localhost:3000', 
-            port: 0, 
-            model: 'Server Down', 
-            firmware: '-', 
-            status: 'Offline', 
-            lastSeen: '-', 
-            mac: '', 
-            gateway: '', 
-            subnet: '', 
-            image: TERMINAL_IMG 
-        }];
-      }
+    try {
+      const res = await fetch(`${getApiUrl()}/devices`);
+      if (!res.ok) throw new Error('Failed to fetch from backend');
+      const data = await res.json();
+      return data;
+    } catch (err) {
+      console.warn("Backend connection failed", err);
+      return [];
     }
-    return MOCK_DEVICES;
   },
 
   getDeviceInfo: async (deviceId: string): Promise<DeviceDiagnostics> => {
-    if (!CURRENT_SETTINGS.communication.useMockApi) {
       try {
         const res = await fetch(`${getApiUrl()}/devices/${deviceId}/info`, { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
         
-        if (!res.ok) {
-           // Intentar leer el mensaje de error JSON del servidor
-           try {
-             const errJson = await res.json();
-             return { success: false, message: errJson.message || 'Error del servidor' };
-           } catch(e) {
-             return { success: false, message: `Error HTTP: ${res.status}` };
-           }
+        const json = await res.json().catch(() => ({}));
+
+        if (!res.ok || !json.success) {
+           return { 
+               success: false, 
+               message: json.message || `Error del servidor (Código ${res.status})`,
+               data: undefined
+           };
         }
         
-        return await res.json();
+        return {
+            success: true,
+            message: "Datos obtenidos",
+            data: json.data
+        };
       } catch (err: any) {
         return { 
           success: false, 
-          message: `Error de red: No se pudo contactar con el backend. Asegúrate de que 'npm run server' esté corriendo.` 
+          message: "No se pudo conectar con el servidor backend.",
         };
       }
-    }
-    
-    // Fallback Mock
-    return { success: false, message: "Modo Mock activo. Desactívalo en configuración." };
   },
 
   sync: async (deviceId: string): Promise<boolean> => {
-    if (!CURRENT_SETTINGS.communication.useMockApi) {
       try {
         const res = await fetch(`${getApiUrl()}/devices/${deviceId}/sync`, { method: 'POST' });
         return res.ok;
       } catch (err) { return false; }
-    }
-    return true;
   }
 };
 
 export const UserService = {
-  getAll: async (): Promise<User[]> => {
-    return MOCK_USERS;
+  // Ahora requiere un deviceId porque los usuarios viven en el terminal
+  getAllFromDevice: async (deviceId: string): Promise<User[]> => {
+    try {
+        const res = await fetch(`${getApiUrl()}/devices/${deviceId}/users`);
+        const json = await res.json();
+        
+        if (!json.success || !json.data) return [];
+
+        // Mapear datos crudos de ZKLib a nuestra interfaz User
+        return json.data.map((zkUser: any) => ({
+            id: zkUser.userId || zkUser.uid,
+            name: zkUser.name || `User ${zkUser.userId}`,
+            email: '-', // ZK standard no suele guardar email
+            department: 'General',
+            status: 'Active',
+            avatar: '', 
+            biometrics: { fingerprint: false, face: false }, // Info no disponible en llamada simple
+            role: zkUser.role === 14 ? 'Admin' : 'User'
+        }));
+    } catch (e) {
+        console.error("Error fetching users", e);
+        return [];
+    }
   }
 };
 
 export const LogService = {
-  downloadFromTerminals: async (): Promise<{ success: boolean; count: number; message: string; data?: any[] }> => {
-    if (!CURRENT_SETTINGS.communication.useMockApi) {
-         try {
-            const res = await fetch(`${getApiUrl()}/logs/download`, { method: 'POST' });
-            if(!res.ok) throw new Error("Backend error");
-            return await res.json();
-         } catch(e) {
-             return { success: false, count: 0, message: "Error conectando al backend." };
-         }
+  getLogsFromDevice: async (deviceId: string): Promise<EventLog[]> => {
+    try {
+        const res = await fetch(`${getApiUrl()}/devices/${deviceId}/logs`);
+        const json = await res.json();
+        
+        if (!json.success || !json.data) return [];
+
+        // Mapear logs crudos de ZKLib a EventLog
+        return json.data.map((log: any, index: number) => ({
+            id: `log-${index}`,
+            timestamp: new Date(log.recordTime).toLocaleString(),
+            type: 'Success', // Asumimos éxito si hay log
+            eventName: 'Fichaje Asistencia',
+            user: log.deviceUserId,
+            device: log.ip || 'Terminal', // ZKLib a veces no devuelve IP en el objeto log
+            details: `Modo verificación: ${log.verifyType || 'FP/Pass'}`
+        }));
+    } catch(e) {
+         console.error("Error fetching logs", e);
+         return [];
     }
-    return { success: true, count: 0, message: "Mock download." };
+  },
+  
+  downloadFromTerminals: async (): Promise<{ success: boolean; count: number; message: string }> => {
+     // Implementación simplificada: intenta descargar del primer dispositivo
+     try {
+         const devices = await DeviceService.getAll();
+         if(devices.length === 0) return { success: false, count: 0, message: "No hay dispositivos."};
+         
+         const logs = await LogService.getLogsFromDevice(devices[0].id);
+         return { success: true, count: logs.length, message: `Se encontraron ${logs.length} registros en ${devices[0].name}` };
+     } catch(e) {
+         return { success: false, count: 0, message: "Error en descarga masiva." };
+     }
   }
 };
 
 export const SettingsService = {
   get: async (): Promise<SystemSettings> => {
-    // Recargamos config de localStorage por si hubo cambios externos
     CURRENT_SETTINGS = loadSettings();
     await delay(100);
     return { ...CURRENT_SETTINGS };
