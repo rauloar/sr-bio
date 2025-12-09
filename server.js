@@ -336,36 +336,61 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
             try {
                 await withZkConnection(device, async (zk) => {
                     
-                    // Nota: Eliminamos la verificación estricta 'if (!zk.setUser)' 
-                    // porque a veces la función está en el prototipo y no es detectable directamente así.
-                    // Confiamos en el bloque try/catch interno.
+                    // 1. Obtener lista actual para mapear UIDs internos
+                    // Esto es CRITICO: ZK necesita el 'uid' (indice interno) para actualizar, no solo el 'userId' (string).
+                    // Si mandamos un UID incorrecto, no actualiza el registro existente.
+                    console.log("[ZK] Obteniendo lista actual del terminal para mapear UIDs...");
+                    const deviceUsers = await zk.getUsers().catch(e => {
+                        console.warn("[ZK] No se pudo obtener usuarios previos, se intentará cálculo directo.");
+                        return { data: [] };
+                    });
+                    
+                    // Crear mapa: ID Usuario (String) -> UID Interno (Int)
+                    const uidMap = new Map();
+                    if(deviceUsers && deviceUsers.data) {
+                        deviceUsers.data.forEach(du => {
+                            uidMap.set(String(du.userId), du.uid);
+                        });
+                    }
 
+                    let updateCount = 0;
                     for (const u of rows) {
                         // Concatenamos Nombre y Apellido para el Terminal
                         const fullName = `${u.name} ${u.lastname || ''}`.trim();
                         const roleCode = u.role === 'Admin' ? 14 : 0; 
+                        const userIdStr = String(u.device_user_id);
                         
+                        // Determinar el UID interno correcto
+                        let internalUid = uidMap.get(userIdStr);
+                        
+                        // Si no existe en el mapa, es un usuario nuevo para el terminal.
+                        // Usamos parseInt como fallback, o 0 para que el dispositivo asigne (depende del modelo).
+                        // Generalmente, intentar usar el mismo ID como UID funciona si está libre.
+                        if (internalUid === undefined) {
+                            internalUid = parseInt(userIdStr);
+                            if(isNaN(internalUid)) internalUid = 0; 
+                        }
+
                         try {
-                            // Firma estándar node-zklib: setUser(uid, userid, name, password, role, cardno)
-                            // uid (int): Índice interno. Usamos u.device_user_id parseado si es numérico.
-                            // userid (string): ID visible.
-                            
+                            // Firma: setUser(uid, userid, name, password, role, cardno)
                             if (typeof zk.setUser === 'function') {
                                 await zk.setUser(
-                                    parseInt(u.device_user_id), // uid
-                                    u.device_user_id,           // userid
-                                    fullName,                   // name (Combined)
-                                    u.password || '',           // password
-                                    roleCode,                   // role
-                                    u.card || '0'               // cardno
+                                    internalUid,    // UID Interno (Vital para overwrites)
+                                    userIdStr,      // ID Visual
+                                    fullName,       // Nombre Completo
+                                    u.password || '', 
+                                    roleCode, 
+                                    u.card || '0'
                                 );
+                                updateCount++;
                             } else {
-                                console.warn(`[ZK] setUser function missing for user ${u.name}`);
+                                console.warn(`[ZK] setUser function missing`);
                             }
                         } catch (innerErr) {
-                            console.error(`[ZK] Error subiendo usuario ${u.device_user_id}:`, innerErr.message);
+                            console.error(`[ZK] Error subiendo usuario ${userIdStr}:`, innerErr.message);
                         }
                     }
+                    console.log(`[ZK] Se procesaron ${updateCount} usuarios.`);
                 });
                 res.json({ success: true, message: `Se enviaron ${rows.length} usuarios al terminal.` });
             } catch (zkErr) {
