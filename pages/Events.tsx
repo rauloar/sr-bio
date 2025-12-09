@@ -33,6 +33,15 @@ const Events: React.FC = () => {
       setLoading(false);
   };
 
+  const handleSyncAndFetch = async () => {
+      setLoading(true);
+      if(selectedDevice) {
+         await DeviceService.sync(selectedDevice);
+         await fetchLogs();
+      }
+      setLoading(false);
+  };
+
   // Cargar logs iniciales cuando se selecciona un dispositivo
   useEffect(() => {
       fetchLogs();
@@ -45,22 +54,11 @@ const Events: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
             <h1 className="text-3xl font-bold leading-tight tracking-[-0.03em] text-white">Registros de Eventos</h1>
-            <p className="text-base font-normal leading-normal text-[#92adc9]">Datos descargados directamente de la memoria del terminal.</p>
+            <p className="text-base font-normal leading-normal text-[#92adc9]">Historial de fichajes sincronizados en base de datos.</p>
           </div>
           
           <div className="flex items-center gap-4">
             
-            <button 
-                onClick={fetchLogs}
-                disabled={loading}
-                className="flex h-10 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold leading-normal tracking-[0.015em] text-white transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-wait shadow-lg shadow-blue-900/20"
-            >
-              <span className={`material-symbols-outlined text-xl ${loading ? 'animate-spin' : ''}`}>
-                 {loading ? 'sync' : 'cloud_download'}
-              </span>
-              <span>{loading ? 'Descargando...' : 'Descargar Registros'}</span>
-            </button>
-
             <div className="flex items-center gap-2 bg-[#233648] rounded-lg p-1 pr-2 border border-[#324d67]">
                 <div className="flex items-center justify-center pl-2 text-slate-400">
                     <span className="material-symbols-outlined">router</span>
@@ -73,6 +71,17 @@ const Events: React.FC = () => {
                         {devices.map(d => <option key={d.id} value={d.id} className="bg-[#101922]">{d.name}</option>)}
                 </select>
             </div>
+
+            <button 
+                onClick={handleSyncAndFetch}
+                disabled={loading}
+                className="flex h-10 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold leading-normal tracking-[0.015em] text-white transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-wait shadow-lg shadow-blue-900/20"
+            >
+              <span className={`material-symbols-outlined text-xl ${loading ? 'animate-spin' : ''}`}>
+                 {loading ? 'sync' : 'cloud_download'}
+              </span>
+              <span>{loading ? 'Sincronizando...' : 'Sincronizar Logs'}</span>
+            </button>
 
           </div>
         </div>
@@ -94,12 +103,12 @@ const Events: React.FC = () => {
                     <tr><td colSpan={4} className="p-8 text-center text-slate-400">
                         <div className="flex flex-col items-center gap-2">
                              <span className="material-symbols-outlined animate-spin text-3xl">sync</span>
-                             <span>Conectando con dispositivo y descargando logs...</span>
+                             <span>Cargando datos...</span>
                         </div>
                     </td></tr>
                 ) : logs.length === 0 ? (
                     <tr><td colSpan={4} className="p-8 text-center text-slate-500">
-                        No hay registros disponibles para este dispositivo.
+                        No hay registros locales. Pulsa "Sincronizar Logs" para descargar del terminal.
                     </td></tr>
                 ) : logs.map((log) => (
                     <tr key={log.id} className="hover:bg-[#192633]/50 transition-colors">
@@ -126,7 +135,7 @@ const Events: React.FC = () => {
           </div>
           
           <div className="p-4 bg-[#111a22] text-xs text-slate-500 text-center border-t border-[#324d67]">
-              Mostrando {logs.length} registros recuperados.
+              Mostrando {logs.length} registros en base de datos.
           </div>
         </div>
       </div>

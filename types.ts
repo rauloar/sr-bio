@@ -12,6 +12,7 @@ export interface User {
   };
   // Metadatos del backend (ya no objetos de librería crudos)
   externalId?: string; 
+  internalUid?: string;
   role?: 'User' | 'Admin';
 }
 

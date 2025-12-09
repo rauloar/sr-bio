@@ -1,3 +1,4 @@
+
 import { Device, User, SystemSettings, DeviceDiagnostics, EventLog } from '../types';
 
 // --- CONFIGURATION ---
@@ -122,7 +123,7 @@ export const DeviceService = {
 };
 
 export const UserService = {
-  // Ahora requiere un deviceId porque los usuarios viven en el terminal
+  // Obtiene usuarios de la BD local (sincronizada)
   getAllFromDevice: async (deviceId: string): Promise<User[]> => {
     try {
         const res = await fetch(`${getApiUrl()}/devices/${deviceId}/users`);
@@ -130,21 +131,37 @@ export const UserService = {
         
         if (!json.success || !json.data) return [];
 
-        // Mapear datos crudos de ZKLib a nuestra interfaz User
         return json.data.map((zkUser: any) => ({
-            id: zkUser.userId || zkUser.uid,
+            id: zkUser.userId,
+            internalUid: String(zkUser.uid), // ID de base de datos
             name: zkUser.name || `User ${zkUser.userId}`,
-            email: '-', // ZK standard no suele guardar email
+            email: '-',
             department: 'General',
             status: 'Active',
             avatar: '', 
-            biometrics: { fingerprint: false, face: false }, // Info no disponible en llamada simple
+            biometrics: { fingerprint: false, face: false }, 
             role: zkUser.role === 14 ? 'Admin' : 'User'
         }));
     } catch (e) {
         console.error("Error fetching users", e);
         return [];
     }
+  },
+
+  // Actualiza usuario en BD local
+  update: async (internalUid: string, data: { name: string; role: string }): Promise<boolean> => {
+      try {
+          const res = await fetch(`${getApiUrl()}/users/${internalUid}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data)
+          });
+          const json = await res.json();
+          return json.success;
+      } catch(e) {
+          console.error("Error updating user", e);
+          return false;
+      }
   }
 };
 
@@ -185,8 +202,16 @@ export const LogService = {
          const devices = await DeviceService.getAll();
          if(devices.length === 0) return { success: false, count: 0, message: "No hay dispositivos."};
          
-         const logs = await LogService.getLogsFromDevice(devices[0].id);
-         return { success: true, count: logs.length, message: `Se encontraron ${logs.length} registros en ${devices[0].name}` };
+         // Trigger sync endpoint for the first device
+         const syncRes = await fetch(`${getApiUrl()}/devices/${devices[0].id}/sync`, { method: 'POST' });
+         const syncJson = await syncRes.json();
+         
+         if (syncJson.success) {
+             const logs = await LogService.getLogsFromDevice(devices[0].id);
+             return { success: true, count: logs.length, message: syncJson.message };
+         } else {
+             return { success: false, count: 0, message: syncJson.message };
+         }
      } catch(e) {
          return { success: false, count: 0, message: "Error en descarga masiva." };
      }
