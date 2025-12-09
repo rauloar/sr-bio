@@ -122,6 +122,21 @@ const getDeviceById = (id) => {
     });
 };
 
+// --- ZK CONNECTION HELPER ---
+const withZkConnection = async (deviceConfig, actionCallback) => {
+    console.log(`[SERVER] Conectando a ${deviceConfig.ip}...`);
+    const zk = new ZKLib(deviceConfig.ip, deviceConfig.port, 5000, 4000);
+    try {
+        await zk.createSocket();
+        const result = await actionCallback(zk);
+        return result;
+    } catch (e) {
+        throw e;
+    } finally {
+        try { await zk.disconnect(); } catch (e) {}
+    }
+};
+
 // --- AUTH ROUTE ---
 app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
