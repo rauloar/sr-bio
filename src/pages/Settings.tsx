@@ -19,9 +19,9 @@ const Settings: React.FC = () => {
         connectionTimeout: 5, 
         retryCount: 1, 
         serverIp: '', 
-        serverPort: 0,
+        serverPort: 8000,
         apiUrl: 'http://localhost:8000/api',
-        useMockApi: true
+        useMockApi: false
     },
     data: {
         clearLogsAfterDownload: false

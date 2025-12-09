@@ -1,84 +1,96 @@
 # SR-BIO Security Manager
 
-Panel de control para gestión de dispositivos biométricos ZKTeco.
+System for managing ZKTeco biometric devices, users, and attendance logs. Built with **React** (Frontend) and **Python/FastAPI** (Backend).
 
-## Requisitos Previos
+## 🏗 Project Structure
 
-- **Node.js** (v18 o superior)
-- **Visual Studio Code**
+- **`src/`**: Frontend source code (React, TypeScript, TailwindCSS).
+- **`backend/`**: Backend source code (Python, FastAPI, pyzk).
+- **`db/`**: Stores the SQLite database (`sr-bio.db`).
+- **`root`**: Configuration files (`vite.config.ts`, `package.json`, etc.).
+
+## 📋 Prerequisites
+
+- **Node.js** (v18 or higher)
+- **Python** (v3.9 or higher)
 - **Git**
+- **Visual Studio Code** (Recommended)
 
-## 🚀 Guía Rápida: De AI Studio a GitHub + VS Code
+## 🚀 Installation & Setup
 
-Para trabajar profesionalmente y mantener este proyecto sincronizado, sigue estos pasos:
-
-### 1. Inicializar el Repositorio Local
-Una vez descargados los archivos y abierta la carpeta en Visual Studio Code:
+### 1. Initialize Repository
+If you have just downloaded the code:
 
 ```bash
-# Inicializa git en la carpeta
 git init
-
-# Añade todos los archivos al control de versiones
 git add .
-
-# Guarda la primera versión
-git commit -m "Initial commit: SR-BIO App from AI Studio"
+git commit -m "Initial commit"
 ```
 
-### 2. Conectar con GitHub
-1. Ve a [GitHub.com/new](https://github.com/new).
-2. Crea un repositorio vacío (público o privado).
-3. Copia la URL del repositorio (ej. `https://github.com/tu-usuario/sr-bio-manager.git`).
-4. Ejecuta en tu terminal de VS Code:
+### 2. Install Frontend Dependencies
+Installs React, Vite, and UI libraries.
 
 ```bash
-# Vincula tu carpeta local con GitHub
-git remote add origin <PEGA_AQUI_LA_URL_DEL_REPO>
-
-# Renombra la rama principal a main (estándar actual)
-git branch -M main
-
-# Sube el código
-git push -u origin main
+npm install
 ```
 
-### 3. Flujo de Trabajo Diario
+### 3. Install Backend Dependencies
+Installs FastAPI, Uvicorn, and pyzk.
 
-1. **Backend (Conexión Real):**
-   ```bash
-   npm install
-   npm run server
-   ```
-   *Esto levanta el puente en el puerto 3000.*
+```bash
+pip install -r requirements.txt
+```
 
-2. **Frontend (Interfaz):**
-   En otra terminal:
-   ```bash
-   npm run dev
-   ```
-   *Esto levanta la web en el puerto 5173.*
+---
 
-3. **Guardar cambios futuros:**
-   Cada vez que modifiques código en VS Code:
-   ```bash
-   git add .
-   git commit -m "Descripción de los cambios"
-   git push
-   ```
+## 🏃‍♂️ Running the Application
 
-## Configuración del Backend (node-zklib)
+You need to run **two** terminals simultaneously (one for the Backend and one for the Frontend).
 
-El archivo `server.js` actúa como puente entre la aplicación web y los dispositivos físicos.
+### Terminal 1: Backend (API & Device Connection)
+This starts the Python server on port **8000**.
 
-1.  Asegúrate de que tu ordenador tenga acceso de red a las IPs de los terminales ZKTeco.
-2.  Edita `server.js` para añadir las IPs reales de tus dispositivos en la constante `DEVICES_DB`.
-3.  **Nota para Windows:** `node-zklib` puede requerir herramientas de compilación. Si tienes errores al instalar, ejecuta en PowerShell como Admin: `npm install --global --production windows-build-tools`.
+```bash
+npm run backend
+```
+*Alternative (Manual Python command):*
+```bash
+cd backend
+uvicorn main:app --reload --port 8000
+```
 
-## Uso en la Aplicación
+### Terminal 2: Frontend (User Interface)
+This starts the React application on port **5173**.
 
-1.  Abre la aplicación en el navegador (`http://localhost:5173`).
-2.  Ve a la sección **Configuración** -> **API & Backend (Dev)**.
-3.  Desactiva el interruptor **"Usar Mock API"**.
-4.  Asegúrate de que la URL del Backend sea `http://localhost:3000/api`.
-5.  Ve a **Dispositivos**, selecciona uno y pulsa **"Conectar y Obtener Info"**.
+```bash
+npm run dev
+```
+
+OPEN: [http://localhost:5173](http://localhost:5173)
+
+---
+
+## ⚙️ Configuration
+
+1. **Login**: Default root user will be created upon first login (username/password provided in prompt or auto-generated in `auth_users` table if empty).
+2. **Connect Backend**:
+   - Go to **Settings (Configuración)** > **Dev API**.
+   - Ensure **"Usar Mock API"** is **OFF**.
+   - Ensure API URL is `http://localhost:8000/api`.
+3. **Add Devices**:
+   - Go to **Devices**.
+   - Add your ZKTeco device IP and Port (Default 4370).
+   - Click **"Conectar y Obtener Info"** to verify connection.
+
+## 🛠 Tech Stack
+
+- **Frontend**: React 18, TypeScript, Tailwind CSS, Vite.
+- **Backend**: Python 3.x, FastAPI.
+- **Driver**: `pyzk` (Native ZKTeco Protocol).
+- **Database**: SQLite.
+
+## ⚠️ Troubleshooting
+
+- **Connection Refused**: Ensure the backend is running on port 8000.
+- **Device Timeout**: Check if the device IP is reachable (`ping <device-ip>`) and that no other software (like ZKAccess) is holding the connection.
+- **Database Errors**: Ensure the `db/` folder has write permissions. You can re-initialize the DB in **Settings > Base de Datos**.

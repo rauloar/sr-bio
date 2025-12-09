@@ -1,10 +1,3 @@
-console.log("---------------------------------------------------------");
-console.log(" NOTICE: The backend has been migrated to Python (pyzk).");
-console.log("---------------------------------------------------------");
-console.log("Please run the following commands to start the server:");
-console.log("");
-console.log("  1. pip install -r requirements.txt");
-console.log("  2. python server.py");
-console.log("");
-console.log("This file (server.js) is no longer used.");
-process.exit(0);
+// This file is deprecated and no longer used.
+// The backend has been migrated to Python/FastAPI in the 'backend/' directory.
+// You can safely delete this file.
