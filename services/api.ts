@@ -157,15 +157,22 @@ export const LogService = {
         if (!json.success || !json.data) return [];
 
         // Mapear logs crudos de ZKLib a EventLog
-        return json.data.map((log: any, index: number) => ({
-            id: `log-${index}`,
-            timestamp: new Date(log.recordTime).toLocaleString(),
-            type: 'Success', // Asumimos éxito si hay log
-            eventName: 'Fichaje Asistencia',
-            user: log.deviceUserId,
-            device: log.ip || 'Terminal', // ZKLib a veces no devuelve IP en el objeto log
-            details: `Modo verificación: ${log.verifyType || 'FP/Pass'}`
-        }));
+        return json.data.map((log: any, index: number) => {
+            // Convert to Date object to ensure we have a valid timestamp, then to ISO string
+            let date = new Date(log.recordTime);
+            // Fallback for invalid dates
+            if (isNaN(date.getTime())) date = new Date();
+
+            return {
+                id: `log-${index}`,
+                timestamp: date.toISOString(), // Use ISO format for correct sorting
+                type: 'Success', 
+                eventName: 'Fichaje Asistencia',
+                user: log.deviceUserId,
+                device: log.ip || 'Terminal', 
+                details: `Modo verificación: ${log.verifyType || 'FP/Pass'}`
+            };
+        });
     } catch(e) {
          console.error("Error fetching logs", e);
          return [];

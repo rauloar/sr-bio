@@ -22,14 +22,18 @@ const Events: React.FC = () => {
   const fetchLogs = async () => {
       if(!selectedDevice) return;
       setLoading(true);
-      setLogs([]); 
+      
       const realLogs = await LogService.getLogsFromDevice(selectedDevice);
-      // Ordenar por fecha descendente
+      
+      // Ordenar por fecha descendente (más recientes primero)
+      // Timestamp ahora es ISO string, así que la comparación de fechas funciona correctamente
       realLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      
       setLogs(realLogs);
       setLoading(false);
   };
 
+  // Cargar logs iniciales cuando se selecciona un dispositivo
   useEffect(() => {
       fetchLogs();
   }, [selectedDevice]);
@@ -43,24 +47,33 @@ const Events: React.FC = () => {
             <h1 className="text-3xl font-bold leading-tight tracking-[-0.03em] text-white">Registros de Eventos</h1>
             <p className="text-base font-normal leading-normal text-[#92adc9]">Datos descargados directamente de la memoria del terminal.</p>
           </div>
-          <div className="flex items-center gap-2">
+          
+          <div className="flex items-center gap-4">
             
-            <select 
-                    className="h-10 rounded-lg border border-[#324d67] bg-[#233648] px-3 text-sm text-white focus:ring-primary"
-                    value={selectedDevice}
-                    onChange={(e) => setSelectedDevice(e.target.value)}
-            >
-                    {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-
             <button 
                 onClick={fetchLogs}
                 disabled={loading}
-                className="flex h-10 min-w-[84px] cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg border border-[#324d67] bg-[#233648] px-4 text-sm font-bold leading-normal tracking-[0.015em] text-white transition-colors hover:bg-[#2a3f55]"
+                className="flex h-10 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold leading-normal tracking-[0.015em] text-white transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-wait shadow-lg shadow-blue-900/20"
             >
-              <span className={`material-symbols-outlined text-base ${loading ? 'animate-spin' : ''}`}>refresh</span>
-              <span className="truncate">{loading ? 'Cargando...' : 'Actualizar'}</span>
+              <span className={`material-symbols-outlined text-xl ${loading ? 'animate-spin' : ''}`}>
+                 {loading ? 'sync' : 'cloud_download'}
+              </span>
+              <span>{loading ? 'Descargando...' : 'Descargar Registros'}</span>
             </button>
+
+            <div className="flex items-center gap-2 bg-[#233648] rounded-lg p-1 pr-2 border border-[#324d67]">
+                <div className="flex items-center justify-center pl-2 text-slate-400">
+                    <span className="material-symbols-outlined">router</span>
+                </div>
+                <select 
+                        className="h-8 rounded bg-transparent border-none text-sm text-white focus:ring-0 cursor-pointer py-1"
+                        value={selectedDevice}
+                        onChange={(e) => setSelectedDevice(e.target.value)}
+                >
+                        {devices.map(d => <option key={d.id} value={d.id} className="bg-[#101922]">{d.name}</option>)}
+                </select>
+            </div>
+
           </div>
         </div>
 
@@ -77,16 +90,35 @@ const Events: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#233648] bg-[#111a22]">
-                {loading ? (
-                    <tr><td colSpan={5} className="p-8 text-center">Conectando con dispositivo y descargando logs...</td></tr>
+                {loading && logs.length === 0 ? (
+                    <tr><td colSpan={4} className="p-8 text-center text-slate-400">
+                        <div className="flex flex-col items-center gap-2">
+                             <span className="material-symbols-outlined animate-spin text-3xl">sync</span>
+                             <span>Conectando con dispositivo y descargando logs...</span>
+                        </div>
+                    </td></tr>
                 ) : logs.length === 0 ? (
-                    <tr><td colSpan={5} className="p-8 text-center text-slate-500">No hay registros o no se pudo conectar.</td></tr>
+                    <tr><td colSpan={4} className="p-8 text-center text-slate-500">
+                        No hay registros disponibles para este dispositivo.
+                    </td></tr>
                 ) : logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-[#192633]/50">
-                      <td className="whitespace-nowrap px-6 py-4 font-mono text-white">{log.timestamp}</td>
-                      <td className="px-6 py-4 font-bold text-white">{log.user}</td>
-                      <td className="px-6 py-4">{log.device}</td>
-                      <td className="px-6 py-4 text-slate-400">{log.details}</td>
+                    <tr key={log.id} className="hover:bg-[#192633]/50 transition-colors">
+                      <td className="whitespace-nowrap px-6 py-4 font-mono text-white">
+                          {/* Renderizar fecha formateada localmente */}
+                          {new Date(log.timestamp).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 font-bold text-white">
+                          <span className="bg-slate-700/50 px-2 py-1 rounded text-xs text-slate-300">ID: {log.user}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                              <span className="material-symbols-outlined text-xs text-slate-500">dns</span>
+                              {log.device}
+                          </div>
+                      </td>
+                      <td className="px-6 py-4 text-slate-400">
+                          {log.details}
+                      </td>
                     </tr>
                 ))}
               </tbody>
