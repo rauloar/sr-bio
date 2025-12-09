@@ -52,7 +52,6 @@ const initializeTables = (callback) => {
         )`);
 
         // 3. Tabla Usuarios (Datos Hardware/ZK)
-        // Basado en hr_employee de ZKTimeNet: emp_pin es device_user_id
         db.run(`CREATE TABLE IF NOT EXISTS users (
             uid INTEGER PRIMARY KEY AUTOINCREMENT,
             device_user_id TEXT, 
@@ -78,7 +77,7 @@ const initializeTables = (callback) => {
             FOREIGN KEY(user_uid) REFERENCES users(uid) ON DELETE CASCADE
         )`);
 
-        // 5. Tabla Logs (att_punches)
+        // 5. Tabla Logs
         db.run(`CREATE TABLE IF NOT EXISTS logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT,
@@ -334,7 +333,6 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
                 await withZkConnection(device, async (zk) => {
                     
                     // PASO 1: Obtener el mapa de UIDs actuales del dispositivo
-                    // Es crucial usar el UID interno que el dispositivo ya tiene asignado al UserID.
                     console.log("[ZK] Leyendo usuarios actuales para mapeo de UIDs...");
                     const deviceUsers = await zk.getUsers().catch(e => ({ data: [] }));
                     
@@ -347,10 +345,17 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
 
                     let updateCount = 0;
                     for (const u of rows) {
-                        // Concatenar Nombre + Apellido
-                        let fullName = `${u.name} ${u.lastname || ''}`.trim();
-                        // Limpieza básica de caracteres que pueden romper el protocolo ZK
-                        fullName = fullName.replace(/[^a-zA-Z0-9 áéíóúÁÉÍÓÚñÑ]/g, '').substring(0, 24);
+                        // Construcción robusta del nombre completo
+                        const namePart = (u.name || '').trim();
+                        const lastPart = (u.lastname || '').trim();
+                        let fullName = `${namePart} ${lastPart}`.trim();
+                        
+                        // Si por algún motivo ambos son vacíos (no debería ocurrir por validación frontend), fallback al ID
+                        if (!fullName) fullName = `User ${u.device_user_id}`;
+
+                        // Limpieza: Permitir solo caracteres seguros para ZK (evita null bytes o encoding raro)
+                        // Límite de 24 caracteres típico en pantallas ZK
+                        fullName = fullName.replace(/[^a-zA-Z0-9 áéíóúÁÉÍÓÚñÑ\.\-]/g, '').substring(0, 24);
 
                         const roleCode = u.role === 'Admin' ? 14 : 0; 
                         const userIdStr = String(u.device_user_id);
@@ -360,20 +365,20 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
                         let internalUid = uidMap.get(userIdStr);
                         let isUpdate = true;
 
-                        // Si no existe, es nuevo. Usamos parseInt como fallback.
+                        // Si no existe en terminal, es nuevo. 
                         if (internalUid === undefined) {
                             internalUid = parseInt(userIdStr);
-                            if(isNaN(internalUid)) internalUid = 0; // Dejar que el dispositivo maneje si es 0 (algunos modelos)
+                            // Fallback seguro si ID no es numérico
+                            if(isNaN(internalUid)) internalUid = 0; 
                             isUpdate = false;
                         }
 
-                        // Forzar card a numérico para el protocolo
+                        // Forzar card a numérico
                         const cardNum = parseInt(u.card) || 0;
 
                         try {
-                            // setUser(uid, userid, name, password, role, cardno)
                             if (typeof zk.setUser === 'function') {
-                                console.log(`[ZK] ${isUpdate ? 'Actualizando' : 'Creando'} Usuario: ${userIdStr} (UID:${internalUid}) - Nombre: "${fullName}"`);
+                                console.log(`[ZK] ${isUpdate ? 'Actualizando' : 'Creando'} UserID:${userIdStr} (UID:${internalUid}) -> Nombre: "${fullName}"`);
                                 
                                 await zk.setUser(
                                     internalUid,    // Internal UID (Vital para overwrite)

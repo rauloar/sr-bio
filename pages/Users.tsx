@@ -41,9 +41,28 @@ const Users: React.FC = () => {
       fetchUsers();
   }, [selectedDevice]);
 
+  // 3. Sincronizar formulario con usuario seleccionado
+  useEffect(() => {
+      if (selectedUser) {
+          setEditForm({
+              name: selectedUser.name || '',
+              lastname: selectedUser.lastname || '',
+              role: selectedUser.role || 'User',
+              address: selectedUser.address || '',
+              city: selectedUser.city || '',
+              province: selectedUser.province || '',
+              cuit: selectedUser.cuit || '',
+              phone: selectedUser.phone || '',
+              email: selectedUser.email || ''
+          });
+      } else {
+          setEditForm({});
+      }
+  }, [selectedUser]);
+
   const handleDownload = async () => {
       if(!selectedDevice) return;
-      if(!window.confirm("Se descargarán los usuarios del terminal a la base de datos local. Los nombres locales no serán sobrescritos, pero se actualizarán tarjetas y contraseñas. ¿Continuar?")) return;
+      if(!window.confirm("Se descargarán los usuarios del terminal a la base de datos local. \n\nNOTA: Los nombres en la BD local NO serán sobrescritos para preservar las correcciones manuales. Se actualizarán tarjetas y contraseñas. ¿Continuar?")) return;
       
       setLoading(true);
       const res = await UserService.downloadFromTerminal(selectedDevice);
@@ -54,7 +73,7 @@ const Users: React.FC = () => {
 
   const handleUpload = async () => {
       if(!selectedDevice) return;
-      if(!window.confirm("Se subirán los usuarios locales al terminal. El 'Nombre' en el terminal será reemplazado por 'Nombre + Apellido' de la base de datos. ¿Continuar?")) return;
+      if(!window.confirm("⚠️ ATENCIÓN: Se subirán los usuarios locales al terminal.\n\nEl 'Nombre' en el terminal será reemplazado por la combinación 'Nombre + Apellido' de la base de datos local. ¿Continuar?")) return;
 
       setLoading(true);
       const res = await UserService.uploadToTerminal(selectedDevice);
@@ -63,30 +82,27 @@ const Users: React.FC = () => {
   };
 
   const handleSelectUser = (user: User) => {
+      // Just set selected, useEffect handles form population
       setSelectedUser(user);
-      setEditForm({ 
-          name: user.name, 
-          lastname: user.lastname || '',
-          role: user.role || 'User',
-          address: user.address || '',
-          city: user.city || '',
-          province: user.province || '',
-          cuit: user.cuit || '',
-          phone: user.phone || '',
-          email: user.email || ''
-      });
   };
 
   const handleSaveUser = async () => {
       if(!selectedUser || !selectedUser.internalUid) return;
       
+      // Validación básica
+      if (!editForm.name || editForm.name.trim() === '') {
+          alert("El campo Nombre es obligatorio.");
+          return;
+      }
+
       setSaving(true);
       const success = await UserService.update(selectedUser.internalUid, editForm);
       setSaving(false);
       
       if(success) {
-          alert("Datos guardados correctamente en BD Local. Recuerde 'Subir a Terminal' para actualizar el nombre en el dispositivo.");
-          fetchUsers(); 
+          alert("Datos guardados correctamente en BD Local.\n\nIMPORTANTE: Pulse 'Subir' para reflejar el cambio de Nombre/Apellido en el visor del terminal.");
+          // Actualizar lista local sin recargar todo para mejor UX
+          setUsers(prev => prev.map(u => u.id === selectedUser.id ? { ...u, ...editForm } : u));
       } else {
           alert("Error al guardar cambios");
       }
@@ -215,11 +231,12 @@ const Users: React.FC = () => {
                                <h3 className="text-sm font-bold uppercase tracking-wider text-primary">Datos Personales</h3>
                                <div className="space-y-4">
                                    <div>
-                                       <label className="block text-sm font-medium text-slate-400 mb-1">Nombre</label>
+                                       <label className="block text-sm font-medium text-slate-400 mb-1">Nombre (Requerido)</label>
                                        <input 
-                                         value={editForm.name}
+                                         value={editForm.name || ''}
                                          onChange={e => setEditForm({...editForm, name: e.target.value})}
                                          className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                         placeholder="Ej: Juan"
                                        />
                                    </div>
                                    <div>
@@ -228,7 +245,7 @@ const Users: React.FC = () => {
                                          value={editForm.lastname || ''}
                                          onChange={e => setEditForm({...editForm, lastname: e.target.value})}
                                          className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
-                                         placeholder="Ingrese apellido"
+                                         placeholder="Ej: Perez"
                                        />
                                    </div>
                                    <div>
