@@ -78,6 +78,7 @@ const initializeTables = (callback) => {
         )`);
 
         // 5. Tabla Logs
+        // Definición base. Si ya existe, se respeta.
         db.run(`CREATE TABLE IF NOT EXISTS logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT,
@@ -88,6 +89,24 @@ const initializeTables = (callback) => {
             UNIQUE(user_id, timestamp, device_id)
         )`);
 
+        // --- MIGRACIÓN DE ESQUEMA AUTOMÁTICA ---
+        // Esto asegura que si la DB ya existía sin las columnas nuevas, se agreguen sin perder datos.
+        db.all("PRAGMA table_info(logs)", [], (err, columns) => {
+            if (!err && columns) {
+                const columnNames = columns.map(c => c.name);
+                
+                if (!columnNames.includes('verify_type')) {
+                    console.log("[DB] Migración: Agregando columna 'verify_type' a tabla logs...");
+                    db.run("ALTER TABLE logs ADD COLUMN verify_type INTEGER DEFAULT 0");
+                }
+                
+                if (!columnNames.includes('status')) {
+                    console.log("[DB] Migración: Agregando columna 'status' a tabla logs...");
+                    db.run("ALTER TABLE logs ADD COLUMN status INTEGER DEFAULT 0"); // 0 suele ser Check-In por defecto
+                }
+            }
+        });
+
         // Seed Dispositivo Default
         db.get("SELECT count(*) as count FROM devices", [], (err, row) => {
             if (!err && row && row.count === 0) {
@@ -96,7 +115,7 @@ const initializeTables = (callback) => {
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
                         ['1', 'ZKTeco Entrada', '192.168.1.201', 4370, 'ZK Terminal', 'Offline', '-', '00:00:00:00:00:00', 'https://cdn-icons-png.flaticon.com/512/9638/9638162.png']);
             }
-            if(callback) callback({ success: true, message: "Tablas inicializadas correctamente." });
+            if(callback) callback({ success: true, message: "Tablas inicializadas y verificadas." });
         });
     });
 };
@@ -291,10 +310,12 @@ app.post('/api/devices/:id/users/download', async (req, res) => {
             });
             
             if (users && users.data) {
+                // MODIFICADO: NO sobrescribir 'name'.
                 const stmt = db.prepare(`
                     INSERT INTO users (device_user_id, name, role, password, card, device_id) 
                     VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(device_user_id, device_id) DO UPDATE SET 
+                        role = excluded.role,
                         card = excluded.card,
                         password = excluded.password
                 `);
@@ -308,13 +329,13 @@ app.post('/api/devices/:id/users/download', async (req, res) => {
             }
             return 0;
         });
-        res.json({ success: true, message: `Se descargaron ${count} usuarios del terminal.` });
+        res.json({ success: true, message: `Descarga completa: ${count} registros procesados (Nombres locales conservados).` });
     } catch (e) {
         res.status(500).json({ success: false, message: e.message });
     }
 });
 
-// 3.2 SUBIR USUARIOS (DB -> ZK) - FIX LÓGICA DE ACTUALIZACIÓN
+// 3.2 SUBIR USUARIOS (DB -> ZK)
 app.post('/api/devices/:id/users/upload', async (req, res) => {
     const deviceId = req.params.id;
     try {
@@ -332,58 +353,56 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
             try {
                 await withZkConnection(device, async (zk) => {
                     
-                    // PASO 1: Obtener el mapa de UIDs actuales del dispositivo
                     console.log("[ZK] Leyendo usuarios actuales para mapeo de UIDs...");
                     const deviceUsers = await zk.getUsers().catch(e => ({ data: [] }));
                     
-                    const uidMap = new Map(); // Map: UserID(String) -> InternalUID(Int)
+                    const uidMap = new Map(); // UserID (String) -> Internal UID (Int)
+                    const existingUids = [];
+                    
                     if(deviceUsers && deviceUsers.data) {
                         deviceUsers.data.forEach(du => {
                             uidMap.set(String(du.userId), du.uid);
+                            existingUids.push(du.uid);
                         });
                     }
+                    
+                    // Estrategia de UID libre seguro (Max + 1)
+                    existingUids.sort((a, b) => a - b);
+                    let nextFreeUid = 1;
+                    if(existingUids.length > 0) nextFreeUid = existingUids[existingUids.length - 1] + 1;
 
                     let updateCount = 0;
                     for (const u of rows) {
-                        // Construcción robusta del nombre completo
+                        // Construcción de Nombre
                         const namePart = (u.name || '').trim();
                         const lastPart = (u.lastname || '').trim();
                         let fullName = `${namePart} ${lastPart}`.trim();
-                        
-                        // Si por algún motivo ambos son vacíos (no debería ocurrir por validación frontend), fallback al ID
                         if (!fullName) fullName = `User ${u.device_user_id}`;
 
-                        // Limpieza: Permitir solo caracteres seguros para ZK (evita null bytes o encoding raro)
-                        // Límite de 24 caracteres típico en pantallas ZK
+                        // Sanitización
                         fullName = fullName.replace(/[^a-zA-Z0-9 áéíóúÁÉÍÓÚñÑ\.\-]/g, '').substring(0, 24);
 
                         const roleCode = u.role === 'Admin' ? 14 : 0; 
                         const userIdStr = String(u.device_user_id);
                         const password = String(u.password || '');
                         
-                        // Determinar el UID interno correcto
+                        // Lógica de asignación de UID interno
                         let internalUid = uidMap.get(userIdStr);
-                        let isUpdate = true;
-
-                        // Si no existe en terminal, es nuevo. 
+                        
                         if (internalUid === undefined) {
-                            internalUid = parseInt(userIdStr);
-                            // Fallback seguro si ID no es numérico
-                            if(isNaN(internalUid)) internalUid = 0; 
-                            isUpdate = false;
+                            internalUid = nextFreeUid++;
                         }
 
-                        // Forzar card a numérico
                         const cardNum = parseInt(u.card) || 0;
 
                         try {
                             if (typeof zk.setUser === 'function') {
-                                console.log(`[ZK] ${isUpdate ? 'Actualizando' : 'Creando'} UserID:${userIdStr} (UID:${internalUid}) -> Nombre: "${fullName}"`);
+                                console.log(`[ZK] Enviando -> UserID: ${userIdStr} | UID: ${internalUid} | Nombre: "${fullName}"`);
                                 
                                 await zk.setUser(
-                                    internalUid,    // Internal UID (Vital para overwrite)
-                                    userIdStr,      // User ID String (emp_pin)
-                                    fullName,       // Nombre concatenado
+                                    internalUid,    
+                                    userIdStr,      
+                                    fullName,       
                                     password, 
                                     roleCode, 
                                     cardNum
@@ -396,7 +415,7 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
                     }
                     console.log(`[ZK] Proceso finalizado. ${updateCount} usuarios procesados.`);
                 });
-                res.json({ success: true, message: `Sincronización completa. Se actualizaron los datos en el terminal.` });
+                res.json({ success: true, message: `Sincronización completa. Verifique el cambio de nombres en el terminal.` });
             } catch (zkErr) {
                 res.status(500).json({ success: false, message: "Error proceso subida: " + zkErr.message });
             }
@@ -427,7 +446,8 @@ app.get('/api/devices/:id/logs', (req, res) => {
             userLastname: r.user_lastname,
             recordTime: r.timestamp,
             ip: 'Local DB', 
-            verifyType: r.verify_type
+            verifyType: r.verify_type,
+            status: r.status // IMPORTANTE: Se agrega el estado (0=In, 1=Out...)
         }));
         res.json({ success: true, data: logs });
     });
@@ -445,9 +465,11 @@ app.post('/api/devices/:id/logs/download', async (req, res) => {
         const count = await withZkConnection(device, async (zk) => {
             const logs = await zk.getAttendances();
             if (logs && logs.data) {
+                // La query se ajusta para guardar el estado y tipo
                 const stmt = db.prepare("INSERT OR IGNORE INTO logs (user_id, device_id, timestamp, verify_type, status) VALUES (?, ?, ?, ?, ?)");
                 logs.data.forEach(l => {
                     let isoDate = new Date(l.recordTime).toISOString();
+                    // l.verifyType y l.status vienen de la libreria ZK
                     stmt.run(l.deviceUserId, deviceId, isoDate, l.verifyType, l.status);
                 });
                 stmt.finalize();

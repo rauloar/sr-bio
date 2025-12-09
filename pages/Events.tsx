@@ -65,7 +65,7 @@ const Events: React.FC = () => {
   const formatTime = (isoString: string) => {
       const d = new Date(isoString);
       if(isNaN(d.getTime())) return '-';
-      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
   };
 
   const getUserFullName = (log: EventLog) => {
@@ -73,6 +73,58 @@ const Events: React.FC = () => {
       const last = log.userLastname || '';
       if(!name && !last) return `ID: ${log.user}`;
       return `${name} ${last}`.trim();
+  };
+
+  const getAttendanceStatusLabel = (status: number) => {
+      switch(status) {
+          case 0: // Check-In
+              return <span className="inline-flex items-center gap-1.5 rounded-md bg-green-500/10 px-2 py-1 text-xs font-bold text-green-400 border border-green-500/20">
+                  <span className="material-symbols-outlined text-[16px]">login</span> Entrada
+              </span>;
+          case 1: // Check-Out
+              return <span className="inline-flex items-center gap-1.5 rounded-md bg-red-500/10 px-2 py-1 text-xs font-bold text-red-400 border border-red-500/20">
+                  <span className="material-symbols-outlined text-[16px] rotate-180">logout</span> Salida
+              </span>;
+          case 2: // Break-Out
+              return <span className="inline-flex items-center gap-1.5 rounded-md bg-orange-500/10 px-2 py-1 text-xs font-bold text-orange-400 border border-orange-500/20">
+                  <span className="material-symbols-outlined text-[16px]">coffee</span> S. Intermedia
+              </span>;
+          case 3: // Break-In
+              return <span className="inline-flex items-center gap-1.5 rounded-md bg-blue-500/10 px-2 py-1 text-xs font-bold text-blue-400 border border-blue-500/20">
+                  <span className="material-symbols-outlined text-[16px]">work_history</span> E. Intermedia
+              </span>;
+          case 4: // OT-In
+              return <span className="inline-flex items-center gap-1.5 rounded-md bg-purple-500/10 px-2 py-1 text-xs font-bold text-purple-400 border border-purple-500/20">
+                   <span className="material-symbols-outlined text-[16px]">add_circle</span> E. Extra
+              </span>;
+          case 5: // OT-Out
+              return <span className="inline-flex items-center gap-1.5 rounded-md bg-purple-500/10 px-2 py-1 text-xs font-bold text-purple-400 border border-purple-500/20">
+                   <span className="material-symbols-outlined text-[16px]">do_not_disturb_on</span> S. Extra
+              </span>;
+          default:
+              return <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-700 px-2 py-1 text-xs font-medium text-slate-300">
+                  Desc ({status})
+              </span>;
+      }
+  };
+
+  const getVerificationMethodIcon = (type: number) => {
+      // 1=Finger, 3=Pwd, 4=Card, 15=Face (A veces varía segun SDK, asumimos comunes)
+      let icon = 'question_mark';
+      let text = 'Otro';
+      let color = 'text-slate-400';
+      
+      if (type === 1) { icon = 'fingerprint'; text = 'Huella'; color = 'text-blue-400'; }
+      else if (type === 3 || type === 0) { icon = 'password'; text = 'Clave'; color = 'text-orange-400'; } 
+      else if (type === 4 || type === 2) { icon = 'credit_card'; text = 'Tarjeta (RFID)'; color = 'text-purple-400'; }
+      else if (type === 15) { icon = 'face'; text = 'Rostro'; color = 'text-green-400'; }
+
+      return (
+          <div className="flex items-center gap-2" title={`Método ID: ${type}`}>
+              <span className={`material-symbols-outlined text-lg ${color}`}>{icon}</span>
+              <span className="text-xs text-slate-300">{text}</span>
+          </div>
+      );
   };
 
   // Filtering & Sorting
@@ -178,7 +230,7 @@ const Events: React.FC = () => {
                     onClick={() => handleSort('user')}
                   >
                       <div className="flex items-center gap-1">
-                          Usuario (Nombre Apellido)
+                          Usuario
                           <span className="material-symbols-outlined text-sm opacity-50">
                               {sortConfig.key === 'user' ? (sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward') : 'unfold_more'}
                           </span>
@@ -197,8 +249,8 @@ const Events: React.FC = () => {
                       </div>
                   </th>
                   <th scope="col" className="px-6 py-4 font-semibold">Hora</th>
-                  <th scope="col" className="px-6 py-4 font-semibold">Dispositivo</th>
-                  <th scope="col" className="px-6 py-4 font-semibold">Estado</th>
+                  <th scope="col" className="px-6 py-4 font-semibold">Evento</th>
+                  <th scope="col" className="px-6 py-4 font-semibold">Método</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#233648] bg-[#111a22]">
@@ -233,13 +285,10 @@ const Events: React.FC = () => {
                           {formatTime(log.timestamp)}
                       </td>
                       <td className="px-6 py-4">
-                          <span className="text-slate-400 text-xs">{log.device}</span>
+                          {getAttendanceStatusLabel(log.attendanceStatus)}
                       </td>
                       <td className="px-6 py-4">
-                          <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-1 text-xs font-medium text-green-400 border border-green-500/20">
-                             <span className="material-symbols-outlined text-[14px]">check</span>
-                             Correcto
-                          </span>
+                          {getVerificationMethodIcon(log.verificationMethod)}
                       </td>
                     </tr>
                 ))}

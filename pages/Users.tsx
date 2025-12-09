@@ -62,18 +62,19 @@ const Users: React.FC = () => {
 
   const handleDownload = async () => {
       if(!selectedDevice) return;
-      if(!window.confirm("Se descargarán los usuarios del terminal a la base de datos local. \n\nNOTA: Los nombres en la BD local NO serán sobrescritos para preservar las correcciones manuales. Se actualizarán tarjetas y contraseñas. ¿Continuar?")) return;
+      // Actualizado: Mensaje de confirmación no destructivo
+      if(!window.confirm("¿BAJAR DATOS? \n\nSe descargarán usuarios nuevos y se actualizarán tarjetas/contraseñas.\n\nNOTA: Los NOMBRES locales NO serán modificados para preservar tus ediciones.")) return;
       
       setLoading(true);
       const res = await UserService.downloadFromTerminal(selectedDevice);
       alert(res.message);
-      await fetchUsers();
+      await fetchUsers(); // Recargar para ver los cambios reales
       setLoading(false);
   };
 
   const handleUpload = async () => {
       if(!selectedDevice) return;
-      if(!window.confirm("⚠️ ATENCIÓN: Se subirán los usuarios locales al terminal.\n\nEl 'Nombre' en el terminal será reemplazado por la combinación 'Nombre + Apellido' de la base de datos local. ¿Continuar?")) return;
+      if(!window.confirm("⚠️ ¿SUBIR DATOS? \n\nSe enviarán los nombres (Nombre + Apellido) de esta lista al terminal.\n\nEl terminal actualizará los usuarios. ¿Continuar?")) return;
 
       setLoading(true);
       const res = await UserService.uploadToTerminal(selectedDevice);
@@ -82,7 +83,6 @@ const Users: React.FC = () => {
   };
 
   const handleSelectUser = (user: User) => {
-      // Just set selected, useEffect handles form population
       setSelectedUser(user);
   };
 
@@ -100,9 +100,11 @@ const Users: React.FC = () => {
       setSaving(false);
       
       if(success) {
-          alert("Datos guardados correctamente en BD Local.\n\nIMPORTANTE: Pulse 'Subir' para reflejar el cambio de Nombre/Apellido en el visor del terminal.");
+          alert("Cambios guardados localmente.\n\nRecuerda pulsar 'SUBIR' para aplicarlos en el terminal.");
           // Actualizar lista local sin recargar todo para mejor UX
           setUsers(prev => prev.map(u => u.id === selectedUser.id ? { ...u, ...editForm } : u));
+          // Actualizar objeto seleccionado para reflejar cambios
+          setSelectedUser(prev => prev ? { ...prev, ...editForm } : null);
       } else {
           alert("Error al guardar cambios");
       }

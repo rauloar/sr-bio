@@ -239,7 +239,9 @@ export const LogService = {
                 userName: log.userName,       
                 userLastname: log.userLastname, 
                 device: log.ip || 'Terminal', 
-                details: `Modo verificación: ${log.verifyType || 'FP/Pass'}`
+                details: `Status: ${log.status}, Verify: ${log.verifyType}`,
+                attendanceStatus: log.status, // 0=In, 1=Out...
+                verificationMethod: log.verifyType // 1=Finger, 15=Face...
             };
         });
     } catch(e) {

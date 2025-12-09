@@ -68,10 +68,12 @@ export interface EventLog {
   type: 'Success' | 'Error' | 'Info' | 'Warning';
   eventName: string;
   user: string;
-  userName?: string; // Nuevo
-  userLastname?: string; // Nuevo
+  userName?: string; 
+  userLastname?: string; 
   device: string;
   details: string;
+  attendanceStatus: number; // 0=In, 1=Out, 2=BreakOut, 3=BreakIn, 4=OT-In, 5=OT-Out
+  verificationMethod: number; // 1=Finger, 15=Face, 0=Pwd/Other, 2=Card
 }
 
 export interface SystemSettings {
