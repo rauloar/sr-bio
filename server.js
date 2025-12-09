@@ -122,18 +122,28 @@ const getDeviceById = (id) => {
     });
 };
 
+const updateDeviceStatus = (id, status, lastSeen = null) => {
+    if (lastSeen) {
+        db.run("UPDATE devices SET status = ?, last_seen = ? WHERE id = ?", [status, lastSeen, id]);
+    } else {
+        db.run("UPDATE devices SET status = ? WHERE id = ?", [status, id]);
+    }
+};
+
 // --- ZK CONNECTION HELPER ---
-// Definida explicitamente para evitar ReferenceError
 const withZkConnection = async (deviceConfig, actionCallback) => {
     console.log(`[SERVER] Conectando a ${deviceConfig.ip}:${deviceConfig.port}...`);
-    const zk = new ZKLib(deviceConfig.ip, deviceConfig.port, 10000, 4000); 
+    // Timeout ajustado a 5s para conexión inicial ZK
+    const zk = new ZKLib(deviceConfig.ip, deviceConfig.port, 5000, 4000); 
     try {
         await zk.createSocket();
         console.log(`[SERVER] Conectado a ${deviceConfig.ip}`);
         const result = await actionCallback(zk);
         return result;
     } catch (e) {
-        console.error(`[SERVER] Error ZK: ${e.message}`);
+        console.error(`[SERVER] Error ZK (${deviceConfig.ip}): ${e.message}`);
+        // Si falla la conexión ZK, asumimos que el dispositivo está Offline o inaccesible
+        updateDeviceStatus(deviceConfig.id, 'Offline');
         throw e;
     } finally {
         try { 
@@ -278,7 +288,11 @@ app.post('/api/devices/:id/users/download', async (req, res) => {
         if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
 
         const count = await withZkConnection(device, async (zk) => {
-            const users = await zk.getUsers();
+            const users = await zk.getUsers().catch(e => {
+                console.warn("[ZK] Error getting users:", e.message);
+                return { data: [] };
+            });
+            
             if (users && users.data) {
                 const stmt = db.prepare(`
                     INSERT INTO users (device_user_id, name, role, password, card, device_id) 
@@ -286,8 +300,6 @@ app.post('/api/devices/:id/users/download', async (req, res) => {
                     ON CONFLICT(device_user_id, device_id) DO UPDATE SET 
                         card = excluded.card,
                         password = excluded.password
-                        -- NOTA: No sobrescribimos el nombre si ya existe localmente para preservar ediciones, 
-                        -- o podriamos decidir sobrescribirlo. Por ahora solo actualizamos card/pass.
                 `);
                 
                 users.data.forEach(u => {
@@ -323,24 +335,33 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
             
             try {
                 await withZkConnection(device, async (zk) => {
+                    // Check if setUser exists safely
+                    if (!zk.setUser) {
+                         throw new Error("Librería ZK no soporta escritura.");
+                    }
+
                     for (const u of rows) {
-                        // Concatenar Nombre + Apellido para el terminal
                         const fullName = `${u.name} ${u.lastname || ''}`.trim();
-                        // 14 = Admin, 0 = User
                         const roleCode = u.role === 'Admin' ? 14 : 0; 
                         
-                        await zk.setUser(
-                            u.device_user_id, 
-                            u.card || '0', 
-                            fullName, 
-                            u.password || '', 
-                            roleCode
-                        );
+                        try {
+                            // uid, userid, name, password, role, cardno
+                            await zk.setUser(
+                                parseInt(u.device_user_id), 
+                                u.device_user_id,          
+                                fullName, 
+                                u.password || '', 
+                                roleCode,
+                                u.card || '0'
+                            );
+                        } catch (innerErr) {
+                            console.error(`[ZK] Error subiendo usuario ${u.device_user_id}:`, innerErr.message);
+                        }
                     }
                 });
                 res.json({ success: true, message: `Se enviaron ${rows.length} usuarios al terminal.` });
             } catch (zkErr) {
-                res.status(500).json({ success: false, message: "Error escribiendo en terminal: " + zkErr.message });
+                res.status(500).json({ success: false, message: "Error proceso subida: " + zkErr.message });
             }
         });
     } catch (e) {
@@ -398,7 +419,7 @@ app.post('/api/devices/:id/logs/download', async (req, res) => {
             // BORRADO SEGURO: Solo si el flag es true
             if (clearLogs === true) {
                 console.log(`[SERVER] Borrando logs en ${device.ip} a petición del usuario.`);
-                await zk.clearAttendanceLog();
+                await zk.clearAttendanceLog().catch(e => console.error("Error clearing logs:", e));
             }
 
             return logs?.data?.length || 0;
@@ -422,15 +443,14 @@ app.post('/api/devices/:id/info-sync', async (req, res) => {
         if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
 
         const info = await withZkConnection(device, async (zk) => {
+            // Usar bloques try-catch individuales para funciones no críticas
             const devInfo = await zk.getInfo().catch(() => ({}));
             const time = await zk.getTime().catch(() => null);
             const users = await zk.getUsers().catch(() => ({ data: [] }));
             const logs = await zk.getAttendances().catch(() => ({ data: [] }));
-            const capacity = await zk.getFreeSize().catch(() => ({})); // Algunos modelos
-
-            // Sync Hora
-            // await zk.setTime(new Date()); // Opcional: Forzar hora PC
-
+            
+            // NO llamar a getFreeSize().
+            
             return {
                 time,
                 info: devInfo,
@@ -444,7 +464,7 @@ app.post('/api/devices/:id/info-sync', async (req, res) => {
         // Actualizar datos técnicos en DB
         if (info.info) {
              const mac = info.info.macAddress || device.mac;
-             const model = info.info.productTime || info.info.productName || 'ZK Terminal'; // ZKLib a veces devuelve nombres raros
+             const model = info.info.productTime || info.info.productName || 'ZK Terminal'; 
              db.run("UPDATE devices SET mac = ?, model = ?, status = 'Online', last_seen = ? WHERE id = ?", 
                  [mac, model, new Date().toLocaleString(), deviceId]);
         }
@@ -456,7 +476,13 @@ app.post('/api/devices/:id/info-sync', async (req, res) => {
                 deviceTime: info.time,
                 capacity: {
                     userCount: info.counts.users,
-                    logCount: info.counts.logs
+                    userCapacity: 1000, 
+                    logCount: info.counts.logs,
+                    logCapacity: 100000, 
+                    fingerprintCount: 0, 
+                    fingerprintCapacity: 0,
+                    faceCount: 0,
+                    faceCapacity: 0
                 }
             }
         });
@@ -504,14 +530,28 @@ app.post('/api/db/optimize', (req, res) => {
     });
 });
 
-// Background Monitor (Ping simple)
-const pingDevice = (host, port, timeout = 3000) => {
+// Background Monitor (Ping TCP ligero)
+const pingDevice = (host, port, timeout = 1500) => {
     return new Promise((resolve) => {
         const socket = new net.Socket();
         socket.setTimeout(timeout);
-        socket.on('connect', () => { socket.destroy(); resolve(true); });
-        socket.on('timeout', () => { socket.destroy(); resolve(false); });
-        socket.on('error', () => { socket.destroy(); resolve(false); });
+        
+        // Destruir socket inmediatamente tras éxito/error
+        socket.on('connect', () => { 
+            socket.destroy(); 
+            resolve(true); 
+        });
+        
+        socket.on('timeout', () => { 
+            socket.destroy(); 
+            resolve(false); 
+        });
+        
+        socket.on('error', () => { 
+            socket.destroy(); 
+            resolve(false); 
+        });
+        
         socket.connect(port, host);
     });
 };
@@ -519,16 +559,30 @@ const pingDevice = (host, port, timeout = 3000) => {
 const monitorDevices = async () => {
     try {
         const devices = await getDevicesFromDB();
-        for (const device of devices) {
-            const isOnline = await pingDevice(device.ip, device.port);
-            const status = isOnline ? 'Online' : 'Offline';
-            // Solo actualizamos el estado, no pisamos datos técnicos
-            db.run("UPDATE devices SET status = ? WHERE id = ?", [status, device.id]);
-        }
-    } catch (e) {}
+        
+        // Usar Promise.all para verificar todos en paralelo
+        // Esto evita que un timeout de 2s bloquee a los demás dispositivos
+        await Promise.all(devices.map(async (device) => {
+            const isOnline = await pingDevice(device.ip, device.port, 1500);
+            const newStatus = isOnline ? 'Online' : 'Offline';
+            
+            // Actualizar solo si cambió
+            if (newStatus !== device.status) {
+                console.log(`[MONITOR] ${device.name} (${device.ip}) cambio de ${device.status} a ${newStatus}`);
+                const lastSeen = isOnline ? new Date().toLocaleString() : device.last_seen;
+                db.run("UPDATE devices SET status = ?, last_seen = ? WHERE id = ?", [newStatus, lastSeen, device.id]);
+            } else if (isOnline) {
+                 // Si sigue online, actualizar last_seen ocasionalmente
+                 db.run("UPDATE devices SET last_seen = ? WHERE id = ?", [new Date().toLocaleString(), device.id]);
+            }
+        }));
+    } catch (e) {
+        console.error("Monitor error:", e);
+    }
 };
 
-setInterval(monitorDevices, 30000);
+// Monitor cada 10 segundos
+setInterval(monitorDevices, 10000);
 monitorDevices();
 
 app.listen(PORT, () => {

@@ -93,12 +93,13 @@ const Dashboard: React.FC = () => {
                <button 
                   onClick={handleDownloadLogs}
                   disabled={isDownloading}
+                  title="Descarga manual de registros de asistencia"
                   className={`flex items-center justify-center gap-2 rounded-lg h-10 px-4 text-sm font-bold text-white transition-all ${isDownloading ? 'bg-slate-600 cursor-wait' : 'bg-[#137fec] hover:bg-[#137fec]/90'}`}
                >
                   <span className={`material-symbols-outlined text-base ${isDownloading ? 'animate-spin' : ''}`}>
                     {isDownloading ? 'sync' : 'cloud_download'}
                   </span>
-                  <span>{isDownloading ? 'Conectando...' : 'Descargar Fichajes'}</span>
+                  <span>{isDownloading ? 'Conectando...' : 'Bajar Fichajes Manual'}</span>
                </button>
             </div>
           </div>
@@ -129,7 +130,7 @@ const Dashboard: React.FC = () => {
                          <tr className="border-b border-[#324d67]">
                             <th className="p-3 text-sm font-semibold text-[#92adc9]">Dispositivo</th>
                             <th className="hidden p-3 text-sm font-semibold text-[#92adc9] md:table-cell">Dirección IP</th>
-                            <th className="p-3 text-sm font-semibold text-[#92adc9]">Estado Configurado</th>
+                            <th className="p-3 text-sm font-semibold text-[#92adc9]">Estado (Monitoreo)</th>
                             <th className="hidden p-3 text-sm font-semibold text-[#92adc9] sm:table-cell">Puerto</th>
                          </tr>
                       </thead>
@@ -141,7 +142,8 @@ const Dashboard: React.FC = () => {
                                <td className="p-3 text-sm text-white font-medium">{dev.name}</td>
                                <td className="hidden p-3 text-sm text-[#92adc9] md:table-cell font-mono">{dev.ip}</td>
                                <td className="p-3">
-                                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium bg-slate-700 text-slate-300`}>
+                                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${dev.status === 'Online' ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
+                                     <span className={`size-1.5 rounded-full ${dev.status === 'Online' ? 'bg-green-500' : 'bg-red-500'} ${dev.status === 'Online' ? 'animate-pulse' : ''}`}></span>
                                      {dev.status}
                                   </span>
                                </td>

@@ -77,9 +77,9 @@ const Devices: React.FC = () => {
   };
 
   const handleSyncInfo = async (device: Device) => {
-      if(!window.confirm(`¿Sincronizar Hora y Capacidad con ${device.name}?`)) return;
+      if(!window.confirm(`¿Sincronizar Hora y Datos Técnicos con ${device.name}?`)) return;
       const success = await DeviceService.syncInfoOnly(device.id);
-      if(success) alert('Hora y datos sincronizados.');
+      if(success) alert('Hora y datos sincronizados correctamente.');
       else alert('Error de sincronización.');
   };
 
@@ -217,7 +217,7 @@ const Devices: React.FC = () => {
                 )}
                 
                 <div className="text-center px-4 py-2 bg-black/20 rounded text-xs text-slate-400">
-                    Conexión bajo demanda (UDP/TCP)
+                    Conexión bajo demanda (Control Horario)
                 </div>
             </div>
 
@@ -231,13 +231,14 @@ const Devices: React.FC = () => {
                     <div className="grid grid-cols-2 gap-3">
                          <button 
                             onClick={() => setLiveCapture(!liveCapture)}
+                            title="Monitor continuo para control de accesos. Mantiene la conexión abierta."
                             className={`flex items-center justify-center gap-2 rounded-lg py-3 text-sm font-medium text-white transition-all ${liveCapture ? 'bg-red-600 hover:bg-red-500 animate-pulse' : 'bg-[#233648] hover:bg-[#344a60]'}`}
                          >
                             <span className="material-symbols-outlined text-lg">videocam</span> 
                             {liveCapture ? 'Desconectar' : 'Live Mode'}
                         </button>
                         <button onClick={() => handleSyncInfo(selectedDevice)} className="flex items-center justify-center gap-2 rounded-lg bg-[#233648] py-3 text-sm font-medium text-white hover:bg-[#344a60]">
-                            <span className="material-symbols-outlined text-lg">sync</span> Sync Info
+                            <span className="material-symbols-outlined text-lg">sync</span> Sync Hora
                         </button>
                     </div>
                 </div>
