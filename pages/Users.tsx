@@ -9,10 +9,9 @@ const Users: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [loadingDevices, setLoadingDevices] = useState(true);
 
-  // Edit Modal State
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', role: 'User' });
+  // Edit State
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState<Partial<User>>({});
   const [saving, setSaving] = useState(false);
 
   // 1. Cargar lista de dispositivos
@@ -32,6 +31,7 @@ const Users: React.FC = () => {
      if(!selectedDevice) return;
      setLoading(true);
      setUsers([]);
+     setSelectedUser(null); // Clear selection on reload
      const realUsers = await UserService.getAllFromDevice(selectedDevice);
      setUsers(realUsers);
      setLoading(false);
@@ -51,22 +51,31 @@ const Users: React.FC = () => {
       setLoading(false);
   };
 
-  const openEditModal = (user: User) => {
-      setEditingUser(user);
-      setEditForm({ name: user.name, role: user.role || 'User' });
-      setIsModalOpen(true);
+  const handleSelectUser = (user: User) => {
+      setSelectedUser(user);
+      setEditForm({ 
+          name: user.name, 
+          lastname: user.lastname || '',
+          role: user.role || 'User',
+          address: user.address || '',
+          city: user.city || '',
+          province: user.province || '',
+          cuit: user.cuit || '',
+          phone: user.phone || '',
+          email: user.email || ''
+      });
   };
 
   const handleSaveUser = async () => {
-      if(!editingUser || !editingUser.internalUid) return;
+      if(!selectedUser || !selectedUser.internalUid) return;
       
       setSaving(true);
-      const success = await UserService.update(editingUser.internalUid, editForm);
+      const success = await UserService.update(selectedUser.internalUid, editForm);
       setSaving(false);
       
       if(success) {
-          setIsModalOpen(false);
-          fetchUsers(); // Recargar lista
+          alert("Datos guardados correctamente");
+          fetchUsers(); 
       } else {
           alert("Error al guardar cambios");
       }
@@ -106,8 +115,8 @@ const Users: React.FC = () => {
             {/* User List Panel */}
             <div className="flex flex-col gap-4 rounded-xl border border-slate-700 bg-[#111a22] p-6 lg:col-span-1">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-lg font-bold text-white">Usuarios (Base de Datos Local)</h2>
-                <span className="text-xs text-slate-500">{users.length} usuarios</span>
+                <h2 className="text-lg font-bold text-white">Usuarios</h2>
+                <span className="text-xs text-slate-500">{users.length} encontrados</span>
               </div>
               
               <div>
@@ -133,93 +142,169 @@ const Users: React.FC = () => {
                  ) : users.length === 0 ? (
                      <div className="p-4 text-center text-slate-500">No hay usuarios. Pulsa Sincronizar.</div>
                  ) : users.map((user) => (
-                    <div key={user.id} className={`flex items-center gap-4 rounded-lg p-3 hover:bg-slate-800/50 bg-[#192633] group`}>
+                    <div 
+                        key={user.id} 
+                        onClick={() => handleSelectUser(user)}
+                        className={`flex items-center gap-4 rounded-lg p-3 cursor-pointer transition-colors ${selectedUser?.id === user.id ? 'bg-primary/20 border border-primary/50' : 'bg-[#192633] hover:bg-slate-800'}`}
+                    >
                        <div className="h-10 w-10 flex items-center justify-center rounded-full bg-slate-700 text-slate-300 font-bold shrink-0">
                            {user.name.charAt(0).toUpperCase()}
                        </div>
                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-white truncate">{user.name}</p>
-                          <p className="text-xs text-slate-400">ID: {user.id}</p>
+                          <p className={`font-semibold truncate ${selectedUser?.id === user.id ? 'text-primary' : 'text-white'}`}>{user.name} {user.lastname}</p>
+                          <p className="text-xs text-slate-400">ID: {user.id} {user.cuit && `| CUIT: ${user.cuit}`}</p>
                        </div>
                        <span className={`rounded-full px-2 py-1 text-xs font-medium ${user.role === 'Admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-700 text-slate-400'}`}>
                           {user.role || 'User'}
                        </span>
-                       <button 
-                            onClick={() => openEditModal(user)}
-                            className="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-white transition-opacity"
-                       >
-                           <span className="material-symbols-outlined">edit</span>
-                       </button>
                     </div>
                  ))}
               </div>
             </div>
 
-            {/* Hint Panel */}
-            <div className="flex flex-col items-center justify-center rounded-xl border border-slate-700 bg-[#111a22] p-6 lg:col-span-2 text-center text-slate-400">
-               <span className="material-symbols-outlined text-4xl mb-4 text-slate-600">settings_sync</span>
-               <h3 className="text-lg font-bold text-white mb-2">Gestión Local</h3>
-               <p className="max-w-md">
-                   Los cambios realizados aquí se guardan en la base de datos del servidor local. 
-                   El ID del usuario en el terminal se mantiene como referencia.
-               </p>
+            {/* Extended Data Form Panel */}
+            <div className="flex flex-col gap-6 rounded-xl border border-slate-700 bg-[#111a22] p-6 lg:col-span-2">
+               {selectedUser ? (
+                   <>
+                       <div className="flex items-center justify-between border-b border-slate-700 pb-4">
+                           <div className="flex items-center gap-4">
+                               <div className="h-14 w-14 flex items-center justify-center rounded-full bg-primary text-white text-2xl font-bold">
+                                   {selectedUser.name.charAt(0).toUpperCase()}
+                               </div>
+                               <div>
+                                   <h2 className="text-xl font-bold text-white">Editar Perfil</h2>
+                                   <p className="text-sm text-slate-400">ID Terminal: <span className="font-mono text-white">{selectedUser.id}</span></p>
+                               </div>
+                           </div>
+                           <button 
+                                onClick={handleSaveUser}
+                                disabled={saving}
+                                className="flex items-center gap-2 px-6 py-2 rounded-lg bg-[#53a653] text-white font-bold hover:bg-[#468f46] disabled:opacity-50 shadow-lg shadow-green-900/20"
+                           >
+                               {saving ? <span className="material-symbols-outlined animate-spin">sync</span> : <span className="material-symbols-outlined">save</span>}
+                               Guardar
+                           </button>
+                       </div>
+
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                           {/* Sección Datos Personales */}
+                           <div className="flex flex-col gap-4">
+                               <h3 className="text-sm font-bold uppercase tracking-wider text-primary">Datos Personales</h3>
+                               <div className="space-y-4">
+                                   <div>
+                                       <label className="block text-sm font-medium text-slate-400 mb-1">Nombre (Terminal)</label>
+                                       <input 
+                                         value={editForm.name}
+                                         onChange={e => setEditForm({...editForm, name: e.target.value})}
+                                         className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                       />
+                                   </div>
+                                   <div>
+                                       <label className="block text-sm font-medium text-slate-400 mb-1">Apellido</label>
+                                       <input 
+                                         value={editForm.lastname || ''}
+                                         onChange={e => setEditForm({...editForm, lastname: e.target.value})}
+                                         className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                         placeholder="Ingrese apellido"
+                                       />
+                                   </div>
+                                   <div>
+                                       <label className="block text-sm font-medium text-slate-400 mb-1">CUIT / ARCA ID</label>
+                                       <input 
+                                         value={editForm.cuit || ''}
+                                         onChange={e => setEditForm({...editForm, cuit: e.target.value})}
+                                         className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                         placeholder="20-XXXXXXXX-X"
+                                       />
+                                   </div>
+                               </div>
+                           </div>
+
+                           {/* Sección Contacto y Ubicación */}
+                           <div className="flex flex-col gap-4">
+                               <h3 className="text-sm font-bold uppercase tracking-wider text-primary">Contacto y Ubicación</h3>
+                               <div className="space-y-4">
+                                   <div>
+                                       <label className="block text-sm font-medium text-slate-400 mb-1">Dirección</label>
+                                       <input 
+                                         value={editForm.address || ''}
+                                         onChange={e => setEditForm({...editForm, address: e.target.value})}
+                                         className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                       />
+                                   </div>
+                                   <div className="grid grid-cols-2 gap-4">
+                                       <div>
+                                           <label className="block text-sm font-medium text-slate-400 mb-1">Localidad</label>
+                                           <input 
+                                             value={editForm.city || ''}
+                                             onChange={e => setEditForm({...editForm, city: e.target.value})}
+                                             className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                           />
+                                       </div>
+                                       <div>
+                                           <label className="block text-sm font-medium text-slate-400 mb-1">Provincia</label>
+                                           <input 
+                                             value={editForm.province || ''}
+                                             onChange={e => setEditForm({...editForm, province: e.target.value})}
+                                             className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                           />
+                                       </div>
+                                   </div>
+                                   <div className="grid grid-cols-2 gap-4">
+                                       <div>
+                                            <label className="block text-sm font-medium text-slate-400 mb-1">Teléfono</label>
+                                            <input 
+                                              value={editForm.phone || ''}
+                                              onChange={e => setEditForm({...editForm, phone: e.target.value})}
+                                              className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                            />
+                                       </div>
+                                       <div>
+                                            <label className="block text-sm font-medium text-slate-400 mb-1">Email</label>
+                                            <input 
+                                              value={editForm.email || ''}
+                                              onChange={e => setEditForm({...editForm, email: e.target.value})}
+                                              className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                            />
+                                       </div>
+                                   </div>
+                               </div>
+                           </div>
+                           
+                           {/* Sección Sistema */}
+                           <div className="md:col-span-2 pt-4 border-t border-slate-700">
+                               <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4">Permisos y Roles</h3>
+                               <div className="flex gap-4">
+                                   <div className="w-1/2">
+                                       <label className="block text-sm font-medium text-slate-400 mb-1">Rol en Terminal</label>
+                                       <select 
+                                          value={editForm.role}
+                                          onChange={e => setEditForm({...editForm, role: e.target.value as any})}
+                                          className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
+                                       >
+                                           <option value="User">Usuario Normal</option>
+                                           <option value="Admin">Administrador</option>
+                                       </select>
+                                   </div>
+                               </div>
+                           </div>
+                       </div>
+                   </>
+               ) : (
+                   <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-4">
+                       <div className="p-6 rounded-full bg-[#192633]">
+                           <span className="material-symbols-outlined text-6xl text-slate-600">person_search</span>
+                       </div>
+                       <div className="text-center">
+                           <h3 className="text-xl font-bold text-white">Seleccione un usuario</h3>
+                           <p className="max-w-xs mx-auto mt-2 text-sm">Haga clic en un usuario de la lista izquierda para ver y editar su perfil completo, CUIT y datos de contacto.</p>
+                       </div>
+                   </div>
+               )}
             </div>
           </div>
         </div>
       </div>
-
-      {/* Edit Modal */}
-      {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-              <div className="w-full max-w-md rounded-xl border border-slate-700 bg-[#111a22] shadow-2xl overflow-hidden">
-                  <div className="border-b border-slate-700 bg-[#192633] px-6 py-4">
-                      <h3 className="text-lg font-bold text-white">Editar Usuario</h3>
-                  </div>
-                  <div className="p-6 flex flex-col gap-4">
-                      <div>
-                          <label className="block text-sm font-medium text-slate-400 mb-1">ID Terminal</label>
-                          <input disabled value={editingUser?.id} className="w-full rounded-lg bg-slate-800 border-slate-600 text-slate-400 cursor-not-allowed" />
-                      </div>
-                      <div>
-                          <label className="block text-sm font-medium text-slate-300 mb-1">Nombre Completo</label>
-                          <input 
-                            value={editForm.name}
-                            onChange={e => setEditForm({...editForm, name: e.target.value})}
-                            className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary" 
-                          />
-                      </div>
-                      <div>
-                          <label className="block text-sm font-medium text-slate-300 mb-1">Rol</label>
-                          <select 
-                             value={editForm.role}
-                             onChange={e => setEditForm({...editForm, role: e.target.value})}
-                             className="w-full rounded-lg bg-[#233648] border-slate-600 text-white focus:ring-primary focus:border-primary"
-                          >
-                              <option value="User">Usuario Normal</option>
-                              <option value="Admin">Administrador</option>
-                          </select>
-                      </div>
-                  </div>
-                  <div className="border-t border-slate-700 bg-[#192633] px-6 py-4 flex justify-end gap-3">
-                      <button 
-                        onClick={() => setIsModalOpen(false)}
-                        className="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-700 font-medium text-sm"
-                      >
-                          Cancelar
-                      </button>
-                      <button 
-                        onClick={handleSaveUser}
-                        disabled={saving}
-                        className="px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 font-bold text-sm flex items-center gap-2"
-                      >
-                          {saving && <span className="material-symbols-outlined text-sm animate-spin">sync</span>}
-                          Guardar Cambios
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
     </div>
   );
 };

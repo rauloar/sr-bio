@@ -1,18 +1,26 @@
 
 export interface User {
-  id: string;
-  name: string;
-  email: string;
-  department: string;
+  id: string; // ID en el terminal ZK
+  name: string; // Nombre en ZK
+  
+  // Datos extendidos (user_details)
+  lastname?: string;
+  address?: string;
+  city?: string;
+  province?: string;
+  cuit?: string; // ARCA ID
+  phone?: string;
+  email?: string;
+
+  // Metadatos y sistema
   status: 'Active' | 'Inactive';
   avatar: string;
   biometrics: {
     fingerprint: boolean;
     face: boolean;
   };
-  // Metadatos del backend (ya no objetos de librería crudos)
   externalId?: string; 
-  internalUid?: string;
+  internalUid?: string; // ID Local SQLite (PK)
   role?: 'User' | 'Admin';
 }
 
@@ -22,7 +30,7 @@ export interface Device {
   ip: string;
   model: string;
   firmware: string;
-  status: 'Online' | 'Offline' | 'Syncing'; // Represents last known status or current operation status
+  status: 'Online' | 'Offline' | 'Syncing'; 
   lastSeen: string;
   mac: string;
   gateway: string;
@@ -46,10 +54,10 @@ export interface DeviceDiagnostics {
   success: boolean;
   message: string;
   data?: {
-    deviceTime: string; // Fecha y hora interna del reloj del dispositivo
+    deviceTime: string; 
     firmwareVersion: string;
     serialNumber: string;
-    platform: string; // e.g., ZLM60
+    platform: string; 
     capacity: ZkCapacity;
   }
 }
@@ -60,6 +68,8 @@ export interface EventLog {
   type: 'Success' | 'Error' | 'Info' | 'Warning';
   eventName: string;
   user: string;
+  userName?: string; // Nuevo
+  userLastname?: string; // Nuevo
   device: string;
   details: string;
 }
@@ -71,7 +81,6 @@ export interface SystemSettings {
     retryCount: number;
     serverIp: string;
     serverPort: number;
-    // Real Backend Configuration
     apiUrl: string;
     useMockApi: boolean;
   };

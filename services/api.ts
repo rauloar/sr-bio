@@ -39,19 +39,24 @@ const TERMINAL_IMG = "https://cdn-icons-png.flaticon.com/512/9638/9638162.png";
 
 export const AuthService = {
   login: async (username: string, password: string): Promise<{ success: boolean; token?: string; user?: any; message?: string }> => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        if (username === 'admin' && password === 'password') {
-          const fakeToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.real';
-          const user = { name: 'Administrador', avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBi2BiXGn43U3J2AFbqw90t5qoo1lHUOCNW3o7T7kCZTc7gPkt4-1DA_y2D4_hOdl_PojC89G2FD-2AYcArIp0-T0T_kJlgFQejqC5T1IuC5HYV9xVfGPe5KK3n_0liSq6dWcF-jMQyi4_pIfHqFPmq0N-1XXm58Ac6SQFQjJTqi_RCsFkSezSfJFW81wMsfwQuJlOv6FGacn4-soEoLtv_C-0VwAem5MRC9ENAFWeLkCLvz6hlmtsYcmiv5Wjjg1SyWaBQxmny9h0' };
-          localStorage.setItem('sr_bio_token', fakeToken);
-          localStorage.setItem('sr_bio_user', JSON.stringify(user));
-          resolve({ success: true, token: fakeToken, user });
-        } else {
-          resolve({ success: false, message: 'Credenciales inválidas (admin/password)' });
+    try {
+        const res = await fetch(`${getApiUrl()}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            localStorage.setItem('sr_bio_token', data.token);
+            localStorage.setItem('sr_bio_user', JSON.stringify(data.user));
         }
-      }, 500);
-    });
+        return data;
+
+    } catch (e) {
+        console.error("Auth error", e);
+        return { success: false, message: "Error de conexión con el servidor" };
+    }
   },
 
   logout: () => {
@@ -139,16 +144,23 @@ export const UserService = {
         
         if (!json.success || !json.data) return [];
 
-        return json.data.map((zkUser: any) => ({
-            id: zkUser.userId,
-            internalUid: String(zkUser.uid), 
-            name: zkUser.name || `User ${zkUser.userId}`,
-            email: '-',
+        return json.data.map((u: any) => ({
+            id: u.userId,
+            internalUid: String(u.uid), 
+            name: u.name || `User ${u.userId}`,
+            email: u.email || '',
             department: 'General',
             status: 'Active',
             avatar: '', 
             biometrics: { fingerprint: false, face: false }, 
-            role: zkUser.role === 14 ? 'Admin' : 'User'
+            role: u.role === 14 ? 'Admin' : 'User',
+            // Extended fields
+            lastname: u.lastname,
+            address: u.address,
+            city: u.city,
+            province: u.province,
+            cuit: u.cuit,
+            phone: u.phone
         }));
     } catch (e) {
         console.error("Error fetching users", e);
@@ -156,7 +168,7 @@ export const UserService = {
     }
   },
 
-  update: async (internalUid: string, data: { name: string; role: string }): Promise<boolean> => {
+  update: async (internalUid: string, data: Partial<User>): Promise<boolean> => {
       try {
           const res = await fetch(`${getApiUrl()}/users/${internalUid}`, {
               method: 'PUT',
@@ -190,6 +202,8 @@ export const LogService = {
                 type: 'Success', 
                 eventName: 'Fichaje Asistencia',
                 user: log.deviceUserId,
+                userName: log.userName,       // Nuevo del backend
+                userLastname: log.userLastname, // Nuevo del backend
                 device: log.ip || 'Terminal', 
                 details: `Modo verificación: ${log.verifyType || 'FP/Pass'}`
             };

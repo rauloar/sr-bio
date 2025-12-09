@@ -17,7 +17,6 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // --- DATABASE SETUP (SQLite) ---
-// Función helper para conectar. Nota: new Database() crea el archivo si no existe.
 const connectDB = () => {
     return new sqlite3.Database(DB_PATH, (err) => {
         if (err) console.error('Error opening database:', err.message);
@@ -29,7 +28,17 @@ const db = connectDB();
 // --- DB INITIALIZATION LOGIC ---
 const initializeTables = (callback) => {
     db.serialize(() => {
-        // Tabla Dispositivos
+        
+        // 1. Tabla Auth Users (Sistema Web)
+        db.run(`CREATE TABLE IF NOT EXISTS auth_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
+            password TEXT,
+            role TEXT,
+            created_at TEXT
+        )`);
+
+        // 2. Tabla Dispositivos
         db.run(`CREATE TABLE IF NOT EXISTS devices (
             id TEXT PRIMARY KEY,
             name TEXT,
@@ -42,8 +51,7 @@ const initializeTables = (callback) => {
             image TEXT
         )`);
 
-        // Tabla Usuarios
-        // Añadimos restricción UNIQUE para evitar duplicados y permitir UPSERT seguro
+        // 3. Tabla Usuarios (Datos Hardware/ZK)
         db.run(`CREATE TABLE IF NOT EXISTS users (
             uid INTEGER PRIMARY KEY AUTOINCREMENT,
             device_user_id TEXT, 
@@ -56,7 +64,20 @@ const initializeTables = (callback) => {
             UNIQUE(device_user_id, device_id)
         )`);
 
-        // Tabla Logs
+        // 4. Tabla Detalles de Usuario (Datos de Negocio/Extendidos)
+        db.run(`CREATE TABLE IF NOT EXISTS user_details (
+            user_uid INTEGER PRIMARY KEY,
+            lastname TEXT,
+            address TEXT,
+            city TEXT,
+            province TEXT,
+            cuit TEXT,
+            phone TEXT,
+            email TEXT,
+            FOREIGN KEY(user_uid) REFERENCES users(uid) ON DELETE CASCADE
+        )`);
+
+        // 5. Tabla Logs
         db.run(`CREATE TABLE IF NOT EXISTS logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT,
@@ -67,7 +88,7 @@ const initializeTables = (callback) => {
             UNIQUE(user_id, timestamp, device_id)
         )`);
 
-        // Insertar dispositivo por defecto SOLO si la tabla está vacía
+        // Seed Dispositivo Default
         db.get("SELECT count(*) as count FROM devices", [], (err, row) => {
             if (!err && row && row.count === 0) {
                 console.log("[DB] Seeding default device...");
@@ -80,9 +101,7 @@ const initializeTables = (callback) => {
     });
 };
 
-// Inicializamos al arrancar por si acaso, pero el usuario puede reinicializar desde UI
 initializeTables(() => console.log('[DB] Database checks complete.'));
-
 
 // --- HELPERS DB ---
 const getDevicesFromDB = () => {
@@ -103,103 +122,52 @@ const getDeviceById = (id) => {
     });
 };
 
-// --- BACKGROUND MONITOR SERVICE ---
-const pingDevice = (host, port, timeout = 3000) => {
-    return new Promise((resolve) => {
-        const socket = new net.Socket();
-        socket.setTimeout(timeout);
-        socket.on('connect', () => { socket.destroy(); resolve(true); });
-        socket.on('timeout', () => { socket.destroy(); resolve(false); });
-        socket.on('error', () => { socket.destroy(); resolve(false); });
-        socket.connect(port, host);
-    });
-};
+// --- AUTH ROUTE ---
+app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
 
-const monitorDevices = async () => {
-    try {
-        const devices = await getDevicesFromDB();
-        for (const device of devices) {
-            const isOnline = await pingDevice(device.ip, device.port);
-            const status = isOnline ? 'Online' : 'Offline';
-            const lastSeen = isOnline ? new Date().toLocaleString() : device.last_seen;
-            
-            db.run("UPDATE devices SET status = ?, last_seen = ? WHERE id = ?", [status, lastSeen, device.id]);
+    if (!username || !password) {
+        return res.status(400).json({ success: false, message: "Usuario y contraseña requeridos" });
+    }
+
+    db.get("SELECT count(*) as count FROM auth_users", [], (err, row) => {
+        if (err) return res.status(500).json({ success: false, message: err.message });
+
+        // ESCENARIO 1: Primera vez (Base vacía) -> Crear Root
+        if (row.count === 0) {
+            if (username.toLowerCase() !== 'root' && username.toLowerCase() !== 'admin') {
+                // Opcional: Forzar que el primer usuario sea admin/root, o permitir cualquiera
+            }
+            const createdAt = new Date().toISOString();
+            db.run("INSERT INTO auth_users (username, password, role, created_at) VALUES (?, ?, 'root', ?)", 
+                [username, password, createdAt], 
+                function(err) {
+                    if (err) return res.status(500).json({ success: false, message: "Error al crear usuario root" });
+                    
+                    return res.json({ 
+                        success: true, 
+                        message: "Usuario ROOT creado exitosamente. Bienvenido.",
+                        user: { username, role: 'root' },
+                        token: 'session-token-root-created' // En prod usar JWT real
+                    });
+                }
+            );
+        } else {
+            // ESCENARIO 2: Login Normal
+            db.get("SELECT * FROM auth_users WHERE username = ? AND password = ?", [username, password], (err, user) => {
+                if (err) return res.status(500).json({ success: false, message: err.message });
+                
+                if (!user) {
+                    return res.json({ success: false, message: "Credenciales inválidas." });
+                }
+
+                return res.json({ 
+                    success: true, 
+                    user: { username: user.username, role: user.role },
+                    token: `session-token-${user.id}`
+                });
+            });
         }
-    } catch (e) {
-        // Silent catch for monitoring
-    }
-};
-
-setInterval(monitorDevices, 30000);
-monitorDevices();
-
-// --- ZK CONNECTION HELPER ---
-const withZkConnection = async (deviceConfig, actionCallback) => {
-    console.log(`[SERVER] Conectando a ${deviceConfig.ip}...`);
-    const zk = new ZKLib(deviceConfig.ip, deviceConfig.port, 5000, 4000);
-    try {
-        await zk.createSocket();
-        const result = await actionCallback(zk);
-        return result;
-    } catch (e) {
-        throw e;
-    } finally {
-        try { await zk.disconnect(); } catch (e) {}
-    }
-};
-
-// --- RUTAS DE GESTIÓN DE BASE DE DATOS ---
-
-// DB 1: Estado
-app.get('/api/db/status', (req, res) => {
-    const exists = fs.existsSync(DB_PATH);
-    let size = 0;
-    if (exists) {
-        const stats = fs.statSync(DB_PATH);
-        size = stats.size;
-    }
-
-    if (!exists) {
-        return res.json({ exists: false, size: 0, tables: 0, message: "Archivo de base de datos no encontrado." });
-    }
-
-    // Contar tablas para verificar integridad básica
-    db.get("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", [], (err, row) => {
-        if (err) return res.json({ exists: true, size, tables: 0, error: err.message });
-        res.json({ 
-            exists: true, 
-            size, 
-            tables: row.count,
-            path: path.resolve(DB_PATH)
-        });
-    });
-});
-
-// DB 2: Inicializar (Crear Tablas)
-app.post('/api/db/init', (req, res) => {
-    initializeTables((result) => {
-        res.json(result);
-    });
-});
-
-// DB 3: Backup
-app.post('/api/db/backup', (req, res) => {
-    if (!fs.existsSync(DB_PATH)) return res.status(404).json({ success: false, message: "No hay base de datos para respaldar." });
-    
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = `./sr-bio-backup-${timestamp}.db`;
-    
-    fs.copyFile(DB_PATH, backupPath, (err) => {
-        if (err) return res.status(500).json({ success: false, message: "Error al crear respaldo: " + err.message });
-        res.json({ success: true, message: `Respaldo creado: ${backupPath}` });
-    });
-});
-
-// DB 4: Reparar/Optimizar
-app.post('/api/db/optimize', (req, res) => {
-    db.run("VACUUM;", (err) => {
-        if (err) return res.status(500).json({ success: false, message: "Error al optimizar: " + err.message });
-        res.json({ success: true, message: "Base de datos optimizada (VACUUM ejecutado)." });
     });
 });
 
@@ -225,38 +193,79 @@ app.put('/api/devices/:id', (req, res) => {
     });
 });
 
-// 2. GET USUARIOS (Desde DB Local)
+// 2. GET USUARIOS (JOIN users + user_details)
 app.get('/api/devices/:id/users', (req, res) => {
-    db.all("SELECT * FROM users WHERE device_id = ?", [req.params.id], (err, rows) => {
+    const sql = `
+        SELECT u.*, ud.lastname, ud.address, ud.city, ud.province, ud.cuit, ud.phone, ud.email
+        FROM users u
+        LEFT JOIN user_details ud ON u.uid = ud.user_uid
+        WHERE u.device_id = ?
+    `;
+    
+    db.all(sql, [req.params.id], (err, rows) => {
         if (err) return res.status(500).json({ success: false, message: err.message });
         
-        // Mapear al formato esperado por el frontend
         const users = rows.map(r => ({
             userId: r.device_user_id,
             name: r.name,
             role: r.role === 'Admin' ? 14 : 0, 
             card: r.card,
-            uid: r.uid
+            uid: r.uid,
+            // Datos Extendidos
+            lastname: r.lastname || '',
+            address: r.address || '',
+            city: r.city || '',
+            province: r.province || '',
+            cuit: r.cuit || '',
+            phone: r.phone || '',
+            email: r.email || ''
         }));
         res.json({ success: true, data: users });
     });
 });
 
-// 3. EDITAR USUARIO (Local DB)
+// 3. EDITAR USUARIO (Actualiza ambas tablas)
 app.put('/api/users/:uid', (req, res) => {
-    const { name, role } = req.body;
-    db.run("UPDATE users SET name = ?, role = ? WHERE uid = ?", [name, role, req.params.uid], function(err) {
-        if (err) return res.status(500).json({ success: false, message: err.message });
-        res.json({ success: true, message: "Usuario actualizado correctamente" });
+    const uid = req.params.uid;
+    const { 
+        name, role, // Tabla users
+        lastname, address, city, province, cuit, phone, email // Tabla user_details
+    } = req.body;
+
+    db.serialize(() => {
+        // 1. Actualizar tabla principal
+        db.run("UPDATE users SET name = ?, role = ? WHERE uid = ?", [name, role, uid], (err) => {
+            if (err) console.error("Error updating users table", err);
+        });
+
+        // 2. Upsert tabla detalles (Insert or Replace)
+        const sqlDetails = `
+            INSERT INTO user_details (user_uid, lastname, address, city, province, cuit, phone, email)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_uid) DO UPDATE SET
+                lastname=excluded.lastname,
+                address=excluded.address,
+                city=excluded.city,
+                province=excluded.province,
+                cuit=excluded.cuit,
+                phone=excluded.phone,
+                email=excluded.email
+        `;
+        
+        db.run(sqlDetails, [uid, lastname, address, city, province, cuit, phone, email], function(err) {
+            if (err) return res.status(500).json({ success: false, message: err.message });
+            res.json({ success: true, message: "Usuario actualizado correctamente" });
+        });
     });
 });
 
-// 4. GET LOGS (Desde DB Local)
+// 4. GET LOGS (JOIN user_details)
 app.get('/api/devices/:id/logs', (req, res) => {
     db.all(`
-        SELECT l.*, u.name as user_name 
+        SELECT l.*, u.name as user_name, ud.lastname as user_lastname
         FROM logs l 
         LEFT JOIN users u ON l.user_id = u.device_user_id AND l.device_id = u.device_id
+        LEFT JOIN user_details ud ON u.uid = ud.user_uid
         WHERE l.device_id = ? 
         ORDER BY l.timestamp DESC
     `, [req.params.id], (err, rows) => {
@@ -264,6 +273,8 @@ app.get('/api/devices/:id/logs', (req, res) => {
 
         const logs = rows.map(r => ({
             deviceUserId: r.user_id,
+            userName: r.user_name,
+            userLastname: r.user_lastname,
             recordTime: r.timestamp,
             ip: 'Local DB', 
             verifyType: r.verify_type
@@ -272,30 +283,22 @@ app.get('/api/devices/:id/logs', (req, res) => {
     });
 });
 
-// 5. SINCRONIZAR (Descargar de ZK -> Guardar en DB)
+// 5. SINCRONIZAR
 app.post('/api/devices/:id/sync', async (req, res) => {
     const deviceId = req.params.id;
-    
     try {
         const device = await getDeviceById(deviceId);
         if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
 
         await withZkConnection(device, async (zk) => {
-            // 1. Descargar Usuarios
             const users = await zk.getUsers();
             if (users && users.data) {
-                // Preparamos el insert. 
-                // IMPORTANTE: ON CONFLICT(device_user_id, device_id)
-                // Si existe, actualizamos contraseña y tarjeta (datos tecnicos), 
-                // PERO mantenemos el nombre y rol si ya existen en la DB (respetando la edición local).
-                
                 const stmt = db.prepare(`
                     INSERT INTO users (device_user_id, name, role, password, card, device_id) 
                     VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(device_user_id, device_id) DO UPDATE SET 
                         card = excluded.card,
                         password = excluded.password
-                        -- No actualizamos el nombre ni el rol para no perder ediciones locales
                 `);
                 
                 users.data.forEach(u => {
@@ -305,7 +308,6 @@ app.post('/api/devices/:id/sync', async (req, res) => {
                 stmt.finalize();
             }
 
-            // 2. Descargar Logs
             const logs = await zk.getAttendances();
             if (logs && logs.data) {
                 const stmt = db.prepare("INSERT OR IGNORE INTO logs (user_id, device_id, timestamp, verify_type, status) VALUES (?, ?, ?, ?, ?)");
@@ -316,16 +318,14 @@ app.post('/api/devices/:id/sync', async (req, res) => {
                 stmt.finalize();
             }
         });
-
         res.json({ success: true, message: "Sincronización completada. Datos locales preservados." });
-
     } catch (e) {
         console.error(e);
         res.status(500).json({ success: false, message: e.message || "Error de conexión" });
     }
 });
 
-// Info Endpoint (Live)
+// Info Endpoint
 app.post('/api/devices/:id/info', async (req, res) => {
     try {
         const device = await getDeviceById(req.params.id);
@@ -356,6 +356,69 @@ app.post('/api/devices/:id/info', async (req, res) => {
     }
 });
 
+// DB Management Endpoints
+app.get('/api/db/status', (req, res) => {
+    const exists = fs.existsSync(DB_PATH);
+    let size = 0;
+    if (exists) {
+        const stats = fs.statSync(DB_PATH);
+        size = stats.size;
+    }
+    if (!exists) return res.json({ exists: false, size: 0, tables: 0, message: "Archivo de base de datos no encontrado." });
+
+    db.get("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", [], (err, row) => {
+        if (err) return res.json({ exists: true, size, tables: 0, error: err.message });
+        res.json({ exists: true, size, tables: row.count, path: path.resolve(DB_PATH) });
+    });
+});
+
+app.post('/api/db/init', (req, res) => {
+    initializeTables((result) => { res.json(result); });
+});
+
+app.post('/api/db/backup', (req, res) => {
+    if (!fs.existsSync(DB_PATH)) return res.status(404).json({ success: false, message: "No hay base de datos para respaldar." });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `./sr-bio-backup-${timestamp}.db`;
+    fs.copyFile(DB_PATH, backupPath, (err) => {
+        if (err) return res.status(500).json({ success: false, message: "Error al crear respaldo: " + err.message });
+        res.json({ success: true, message: `Respaldo creado: ${backupPath}` });
+    });
+});
+
+app.post('/api/db/optimize', (req, res) => {
+    db.run("VACUUM;", (err) => {
+        if (err) return res.status(500).json({ success: false, message: "Error al optimizar: " + err.message });
+        res.json({ success: true, message: "Base de datos optimizada (VACUUM ejecutado)." });
+    });
+});
+
+// Background Monitor
+const pingDevice = (host, port, timeout = 3000) => {
+    return new Promise((resolve) => {
+        const socket = new net.Socket();
+        socket.setTimeout(timeout);
+        socket.on('connect', () => { socket.destroy(); resolve(true); });
+        socket.on('timeout', () => { socket.destroy(); resolve(false); });
+        socket.on('error', () => { socket.destroy(); resolve(false); });
+        socket.connect(port, host);
+    });
+};
+
+const monitorDevices = async () => {
+    try {
+        const devices = await getDevicesFromDB();
+        for (const device of devices) {
+            const isOnline = await pingDevice(device.ip, device.port);
+            const status = isOnline ? 'Online' : 'Offline';
+            const lastSeen = isOnline ? new Date().toLocaleString() : device.last_seen;
+            db.run("UPDATE devices SET status = ?, last_seen = ? WHERE id = ?", [status, lastSeen, device.id]);
+        }
+    } catch (e) {}
+};
+
+setInterval(monitorDevices, 30000);
+monitorDevices();
 
 app.listen(PORT, () => {
     console.log(`🚀 SR-BIO Backend Server (SQLite) running on http://localhost:${PORT}`);
