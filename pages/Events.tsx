@@ -26,7 +26,6 @@ const Events: React.FC = () => {
       const realLogs = await LogService.getLogsFromDevice(selectedDevice);
       
       // Ordenar por fecha descendente (más recientes primero)
-      // Timestamp ahora es ISO string, así que la comparación de fechas funciona correctamente
       realLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       
       setLogs(realLogs);
@@ -42,7 +41,6 @@ const Events: React.FC = () => {
       setLoading(false);
   };
 
-  // Cargar logs iniciales cuando se selecciona un dispositivo
   useEffect(() => {
       fetchLogs();
   }, [selectedDevice]);
@@ -113,7 +111,6 @@ const Events: React.FC = () => {
                 ) : logs.map((log) => (
                     <tr key={log.id} className="hover:bg-[#192633]/50 transition-colors">
                       <td className="whitespace-nowrap px-6 py-4 font-mono text-white">
-                          {/* Renderizar fecha formateada localmente */}
                           {new Date(log.timestamp).toLocaleString()}
                       </td>
                       <td className="px-6 py-4 font-bold text-white">

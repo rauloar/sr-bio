@@ -147,6 +147,15 @@ app.get('/api/devices', async (req, res) => {
     }
 });
 
+// 1.1 EDITAR DISPOSITIVO
+app.put('/api/devices/:id', (req, res) => {
+    const { name, ip, port } = req.body;
+    db.run("UPDATE devices SET name = ?, ip = ?, port = ? WHERE id = ?", [name, ip, port, req.params.id], function(err) {
+        if (err) return res.status(500).json({ success: false, message: err.message });
+        res.json({ success: true, message: "Dispositivo actualizado correctamente" });
+    });
+});
+
 // 2. GET USUARIOS (Desde DB Local)
 app.get('/api/devices/:id/users', (req, res) => {
     db.all("SELECT * FROM users WHERE device_id = ?", [req.params.id], (err, rows) => {
@@ -213,19 +222,13 @@ app.post('/api/devices/:id/sync', async (req, res) => {
                         card = excluded.card,
                         password = excluded.password
                 `);
-                // NOTA: No actualizamos el nombre en conflicto para preservar ediciones locales si se desea,
-                // o podemos forzar actualización. Aquí haremos INSERT OR IGNORE logica manual.
                 
                 users.data.forEach(u => {
-                    // Check if exists
                     db.get("SELECT uid FROM users WHERE device_user_id = ? AND device_id = ?", [u.userId, deviceId], (err, row) => {
                         if (!row) {
                             const roleName = u.role === 14 ? 'Admin' : 'User';
                             db.run("INSERT INTO users (device_user_id, name, role, password, card, device_id) VALUES (?, ?, ?, ?, ?, ?)", 
                                 [u.userId, u.name, roleName, u.password, u.cardno, deviceId]);
-                        } else {
-                            // Opcional: Actualizar solo datos técnicos, dejar nombre intacto si fue editado
-                            // Por simplicidad, no hacemos update aquí para respetar ediciones locales de nombre.
                         }
                     });
                 });
@@ -237,9 +240,6 @@ app.post('/api/devices/:id/sync', async (req, res) => {
             if (logs && logs.data) {
                 const stmt = db.prepare("INSERT OR IGNORE INTO logs (user_id, device_id, timestamp, verify_type, status) VALUES (?, ?, ?, ?, ?)");
                 logs.data.forEach(l => {
-                    // Convert ZK date string to ISO
-                    // ZK format often comes as local time, careful with parsing.
-                    // Assuming library returns standard Date object or string.
                     let isoDate = new Date(l.recordTime).toISOString();
                     stmt.run(l.deviceUserId, deviceId, isoDate, l.verifyType, l.status);
                 });

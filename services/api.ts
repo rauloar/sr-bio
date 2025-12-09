@@ -1,4 +1,3 @@
-
 import { Device, User, SystemSettings, DeviceDiagnostics, EventLog } from '../types';
 
 // --- CONFIGURATION ---
@@ -40,7 +39,6 @@ const TERMINAL_IMG = "https://cdn-icons-png.flaticon.com/512/9638/9638162.png";
 
 export const AuthService = {
   login: async (username: string, password: string): Promise<{ success: boolean; token?: string; user?: any; message?: string }> => {
-    // Auth sigue siendo simulado porque no tenemos DB de usuarios web
     return new Promise((resolve) => {
       setTimeout(() => {
         if (username === 'admin' && password === 'password') {
@@ -84,6 +82,17 @@ export const DeviceService = {
     }
   },
 
+  update: async (id: string, data: Partial<Device>): Promise<boolean> => {
+      try {
+        const res = await fetch(`${getApiUrl()}/devices/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        return res.ok;
+      } catch (err) { return false; }
+  },
+
   getDeviceInfo: async (deviceId: string): Promise<DeviceDiagnostics> => {
       try {
         const res = await fetch(`${getApiUrl()}/devices/${deviceId}/info`, { 
@@ -123,7 +132,6 @@ export const DeviceService = {
 };
 
 export const UserService = {
-  // Obtiene usuarios de la BD local (sincronizada)
   getAllFromDevice: async (deviceId: string): Promise<User[]> => {
     try {
         const res = await fetch(`${getApiUrl()}/devices/${deviceId}/users`);
@@ -133,7 +141,7 @@ export const UserService = {
 
         return json.data.map((zkUser: any) => ({
             id: zkUser.userId,
-            internalUid: String(zkUser.uid), // ID de base de datos
+            internalUid: String(zkUser.uid), 
             name: zkUser.name || `User ${zkUser.userId}`,
             email: '-',
             department: 'General',
@@ -148,7 +156,6 @@ export const UserService = {
     }
   },
 
-  // Actualiza usuario en BD local
   update: async (internalUid: string, data: { name: string; role: string }): Promise<boolean> => {
       try {
           const res = await fetch(`${getApiUrl()}/users/${internalUid}`, {
@@ -173,16 +180,13 @@ export const LogService = {
         
         if (!json.success || !json.data) return [];
 
-        // Mapear logs crudos de ZKLib a EventLog
         return json.data.map((log: any, index: number) => {
-            // Convert to Date object to ensure we have a valid timestamp, then to ISO string
             let date = new Date(log.recordTime);
-            // Fallback for invalid dates
             if (isNaN(date.getTime())) date = new Date();
 
             return {
                 id: `log-${index}`,
-                timestamp: date.toISOString(), // Use ISO format for correct sorting
+                timestamp: date.toISOString(), 
                 type: 'Success', 
                 eventName: 'Fichaje Asistencia',
                 user: log.deviceUserId,
@@ -197,12 +201,10 @@ export const LogService = {
   },
   
   downloadFromTerminals: async (): Promise<{ success: boolean; count: number; message: string }> => {
-     // Implementación simplificada: intenta descargar del primer dispositivo
      try {
          const devices = await DeviceService.getAll();
          if(devices.length === 0) return { success: false, count: 0, message: "No hay dispositivos."};
          
-         // Trigger sync endpoint for the first device
          const syncRes = await fetch(`${getApiUrl()}/devices/${devices[0].id}/sync`, { method: 'POST' });
          const syncJson = await syncRes.json();
          
