@@ -303,7 +303,7 @@ const Settings: React.FC = () => {
           {activeTab === 'api' && (
              <div className="flex flex-col gap-6 animate-in fade-in duration-300">
                 <section className="rounded-xl border border-[#324d67] bg-[#111a22] p-6">
-                   <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-400">Conexión Backend</h3>
+                   <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-400">Conexión Backend (Python FastAPI)</h3>
                    <div className="flex flex-col gap-6">
                        <div className="flex items-center justify-between rounded-lg bg-[#233648] p-4">
                            <div className="flex flex-col">
@@ -328,6 +328,7 @@ const Settings: React.FC = () => {
                               value={settings.communication.apiUrl}
                               onChange={(e) => updateSetting('communication', 'apiUrl', e.target.value)}
                            />
+                           <p className="text-xs text-slate-500 mt-1">El backend de Python corre por defecto en el puerto 8000.</p>
                        </div>
                    </div>
                    <div className="flex justify-end pt-4">

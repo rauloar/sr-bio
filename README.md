@@ -27,10 +27,23 @@ git add .
 git commit -m "Initial commit"
 ```
 
-### 2. Install Frontend Dependencies
-Installs React, Vite, and UI libraries.
+### 2. Clean & Install Frontend Dependencies
+If you are migrating from the old version or having issues, run these commands to start fresh.
 
+**Windows (PowerShell):**
+```powershell
+# Borrar carpetas viejas (Soluciona error "Remove-Item param rf")
+Remove-Item -Recurse -Force node_modules
+Remove-Item -Force package-lock.json
+Remove-Item -Force server.js
+
+# Instalar
+npm install
+```
+
+**Mac/Linux/Git Bash:**
 ```bash
+rm -rf node_modules package-lock.json server.js
 npm install
 ```
 
