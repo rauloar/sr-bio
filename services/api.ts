@@ -211,6 +211,7 @@ export const UserService = {
 
   uploadToTerminal: async (deviceId: string): Promise<{success: boolean, message: string}> => {
       try {
+          // Increase timeout logic handled by browser/fetch default or server config
           const res = await fetch(`${getApiUrl()}/devices/${deviceId}/users/upload`, { method: 'POST' });
           return await res.json();
       } catch(e) { return { success: false, message: "Error de conexión" }; }

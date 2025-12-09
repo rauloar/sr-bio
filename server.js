@@ -52,6 +52,7 @@ const initializeTables = (callback) => {
         )`);
 
         // 3. Tabla Usuarios (Datos Hardware/ZK)
+        // Basado en hr_employee de ZKTimeNet: emp_pin es device_user_id
         db.run(`CREATE TABLE IF NOT EXISTS users (
             uid INTEGER PRIMARY KEY AUTOINCREMENT,
             device_user_id TEXT, 
@@ -77,7 +78,7 @@ const initializeTables = (callback) => {
             FOREIGN KEY(user_uid) REFERENCES users(uid) ON DELETE CASCADE
         )`);
 
-        // 5. Tabla Logs
+        // 5. Tabla Logs (att_punches)
         db.run(`CREATE TABLE IF NOT EXISTS logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT,
@@ -133,8 +134,8 @@ const updateDeviceStatus = (id, status, lastSeen = null) => {
 // --- ZK CONNECTION HELPER ---
 const withZkConnection = async (deviceConfig, actionCallback) => {
     console.log(`[SERVER] Conectando a ${deviceConfig.ip}:${deviceConfig.port}...`);
-    // Timeout ajustado a 5s para conexión inicial ZK
-    const zk = new ZKLib(deviceConfig.ip, deviceConfig.port, 5000, 4000); 
+    // Timeout ajustado a 8s para asegurar lectura de usuarios grandes
+    const zk = new ZKLib(deviceConfig.ip, deviceConfig.port, 8000, 4000); 
     try {
         await zk.createSocket();
         console.log(`[SERVER] Conectado a ${deviceConfig.ip}`);
@@ -142,7 +143,6 @@ const withZkConnection = async (deviceConfig, actionCallback) => {
         return result;
     } catch (e) {
         console.error(`[SERVER] Error ZK (${deviceConfig.ip}): ${e.message}`);
-        // Si falla la conexión ZK, asumimos que el dispositivo está Offline o inaccesible
         updateDeviceStatus(deviceConfig.id, 'Offline');
         throw e;
     } finally {
@@ -164,7 +164,6 @@ app.post('/api/auth/login', (req, res) => {
     db.get("SELECT count(*) as count FROM auth_users", [], (err, row) => {
         if (err) return res.status(500).json({ success: false, message: err.message });
 
-        // ESCENARIO 1: Primera vez (Base vacía) -> Crear Root
         if (row.count === 0) {
             const createdAt = new Date().toISOString();
             db.run("INSERT INTO auth_users (username, password, role, created_at) VALUES (?, ?, 'root', ?)", 
@@ -180,7 +179,6 @@ app.post('/api/auth/login', (req, res) => {
                 }
             );
         } else {
-            // ESCENARIO 2: Login Normal
             db.get("SELECT * FROM auth_users WHERE username = ? AND password = ?", [username, password], (err, user) => {
                 if (err) return res.status(500).json({ success: false, message: err.message });
                 if (!user) return res.json({ success: false, message: "Credenciales inválidas." });
@@ -317,14 +315,13 @@ app.post('/api/devices/:id/users/download', async (req, res) => {
     }
 });
 
-// 3.2 SUBIR USUARIOS (DB -> ZK)
+// 3.2 SUBIR USUARIOS (DB -> ZK) - FIX LÓGICA DE ACTUALIZACIÓN
 app.post('/api/devices/:id/users/upload', async (req, res) => {
     const deviceId = req.params.id;
     try {
         const device = await getDeviceById(deviceId);
         if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
 
-        // Obtener usuarios de la DB Local con sus detalles
         db.all(`
             SELECT u.*, ud.lastname 
             FROM users u
@@ -336,17 +333,12 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
             try {
                 await withZkConnection(device, async (zk) => {
                     
-                    // 1. Obtener lista actual para mapear UIDs internos
-                    // Esto es CRITICO: ZK necesita el 'uid' (indice interno) para actualizar, no solo el 'userId' (string).
-                    // Si mandamos un UID incorrecto, no actualiza el registro existente.
-                    console.log("[ZK] Obteniendo lista actual del terminal para mapear UIDs...");
-                    const deviceUsers = await zk.getUsers().catch(e => {
-                        console.warn("[ZK] No se pudo obtener usuarios previos, se intentará cálculo directo.");
-                        return { data: [] };
-                    });
+                    // PASO 1: Obtener el mapa de UIDs actuales del dispositivo
+                    // Es crucial usar el UID interno que el dispositivo ya tiene asignado al UserID.
+                    console.log("[ZK] Leyendo usuarios actuales para mapeo de UIDs...");
+                    const deviceUsers = await zk.getUsers().catch(e => ({ data: [] }));
                     
-                    // Crear mapa: ID Usuario (String) -> UID Interno (Int)
-                    const uidMap = new Map();
+                    const uidMap = new Map(); // Map: UserID(String) -> InternalUID(Int)
                     if(deviceUsers && deviceUsers.data) {
                         deviceUsers.data.forEach(du => {
                             uidMap.set(String(du.userId), du.uid);
@@ -355,44 +347,51 @@ app.post('/api/devices/:id/users/upload', async (req, res) => {
 
                     let updateCount = 0;
                     for (const u of rows) {
-                        // Concatenamos Nombre y Apellido para el Terminal
-                        const fullName = `${u.name} ${u.lastname || ''}`.trim();
+                        // Concatenar Nombre + Apellido
+                        let fullName = `${u.name} ${u.lastname || ''}`.trim();
+                        // Limpieza básica de caracteres que pueden romper el protocolo ZK
+                        fullName = fullName.replace(/[^a-zA-Z0-9 áéíóúÁÉÍÓÚñÑ]/g, '').substring(0, 24);
+
                         const roleCode = u.role === 'Admin' ? 14 : 0; 
                         const userIdStr = String(u.device_user_id);
+                        const password = String(u.password || '');
                         
                         // Determinar el UID interno correcto
                         let internalUid = uidMap.get(userIdStr);
-                        
-                        // Si no existe en el mapa, es un usuario nuevo para el terminal.
-                        // Usamos parseInt como fallback, o 0 para que el dispositivo asigne (depende del modelo).
-                        // Generalmente, intentar usar el mismo ID como UID funciona si está libre.
+                        let isUpdate = true;
+
+                        // Si no existe, es nuevo. Usamos parseInt como fallback.
                         if (internalUid === undefined) {
                             internalUid = parseInt(userIdStr);
-                            if(isNaN(internalUid)) internalUid = 0; 
+                            if(isNaN(internalUid)) internalUid = 0; // Dejar que el dispositivo maneje si es 0 (algunos modelos)
+                            isUpdate = false;
                         }
 
+                        // Forzar card a numérico para el protocolo
+                        const cardNum = parseInt(u.card) || 0;
+
                         try {
-                            // Firma: setUser(uid, userid, name, password, role, cardno)
+                            // setUser(uid, userid, name, password, role, cardno)
                             if (typeof zk.setUser === 'function') {
+                                console.log(`[ZK] ${isUpdate ? 'Actualizando' : 'Creando'} Usuario: ${userIdStr} (UID:${internalUid}) - Nombre: "${fullName}"`);
+                                
                                 await zk.setUser(
-                                    internalUid,    // UID Interno (Vital para overwrites)
-                                    userIdStr,      // ID Visual
-                                    fullName,       // Nombre Completo
-                                    u.password || '', 
+                                    internalUid,    // Internal UID (Vital para overwrite)
+                                    userIdStr,      // User ID String (emp_pin)
+                                    fullName,       // Nombre concatenado
+                                    password, 
                                     roleCode, 
-                                    u.card || '0'
+                                    cardNum
                                 );
                                 updateCount++;
-                            } else {
-                                console.warn(`[ZK] setUser function missing`);
-                            }
+                            } 
                         } catch (innerErr) {
                             console.error(`[ZK] Error subiendo usuario ${userIdStr}:`, innerErr.message);
                         }
                     }
-                    console.log(`[ZK] Se procesaron ${updateCount} usuarios.`);
+                    console.log(`[ZK] Proceso finalizado. ${updateCount} usuarios procesados.`);
                 });
-                res.json({ success: true, message: `Se enviaron ${rows.length} usuarios al terminal.` });
+                res.json({ success: true, message: `Sincronización completa. Se actualizaron los datos en el terminal.` });
             } catch (zkErr) {
                 res.status(500).json({ success: false, message: "Error proceso subida: " + zkErr.message });
             }
@@ -429,10 +428,10 @@ app.get('/api/devices/:id/logs', (req, res) => {
     });
 });
 
-// 4.1 DESCARGAR LOGS (ZK -> DB) Y OPCIONALMENTE BORRAR
+// 4.1 DESCARGAR LOGS (ZK -> DB)
 app.post('/api/devices/:id/logs/download', async (req, res) => {
     const deviceId = req.params.id;
-    const { clearLogs } = req.body; // Flag recibido del frontend
+    const { clearLogs } = req.body; 
 
     try {
         const device = await getDeviceById(deviceId);
@@ -449,7 +448,6 @@ app.post('/api/devices/:id/logs/download', async (req, res) => {
                 stmt.finalize();
             }
             
-            // BORRADO SEGURO: Solo si el flag es true
             if (clearLogs === true) {
                 console.log(`[SERVER] Borrando logs en ${device.ip} a petición del usuario.`);
                 await zk.clearAttendanceLog().catch(e => console.error("Error clearing logs:", e));
@@ -468,7 +466,6 @@ app.post('/api/devices/:id/logs/download', async (req, res) => {
 
 // --- INFO Y MANTENIMIENTO ---
 
-// 5. SINCRONIZAR INFO (Hora, Capacidad, Modelo, MAC)
 app.post('/api/devices/:id/info-sync', async (req, res) => {
     const deviceId = req.params.id;
     try {
@@ -476,13 +473,10 @@ app.post('/api/devices/:id/info-sync', async (req, res) => {
         if (!device) return res.status(404).json({ success: false, message: "Dispositivo no encontrado" });
 
         const info = await withZkConnection(device, async (zk) => {
-            // Usar bloques try-catch individuales para funciones no críticas
             const devInfo = await zk.getInfo().catch(() => ({}));
             const time = await zk.getTime().catch(() => null);
             const users = await zk.getUsers().catch(() => ({ data: [] }));
             const logs = await zk.getAttendances().catch(() => ({ data: [] }));
-            
-            // NO llamar a getFreeSize().
             
             return {
                 time,
@@ -494,7 +488,6 @@ app.post('/api/devices/:id/info-sync', async (req, res) => {
             };
         });
 
-        // Actualizar datos técnicos en DB
         if (info.info) {
              const mac = info.info.macAddress || device.mac;
              const model = info.info.productTime || info.info.productName || 'ZK Terminal'; 
@@ -568,23 +561,9 @@ const pingDevice = (host, port, timeout = 1500) => {
     return new Promise((resolve) => {
         const socket = new net.Socket();
         socket.setTimeout(timeout);
-        
-        // Destruir socket inmediatamente tras éxito/error
-        socket.on('connect', () => { 
-            socket.destroy(); 
-            resolve(true); 
-        });
-        
-        socket.on('timeout', () => { 
-            socket.destroy(); 
-            resolve(false); 
-        });
-        
-        socket.on('error', () => { 
-            socket.destroy(); 
-            resolve(false); 
-        });
-        
+        socket.on('connect', () => { socket.destroy(); resolve(true); });
+        socket.on('timeout', () => { socket.destroy(); resolve(false); });
+        socket.on('error', () => { socket.destroy(); resolve(false); });
         socket.connect(port, host);
     });
 };
@@ -592,20 +571,15 @@ const pingDevice = (host, port, timeout = 1500) => {
 const monitorDevices = async () => {
     try {
         const devices = await getDevicesFromDB();
-        
-        // Usar Promise.all para verificar todos en paralelo
-        // Esto evita que un timeout de 2s bloquee a los demás dispositivos
         await Promise.all(devices.map(async (device) => {
             const isOnline = await pingDevice(device.ip, device.port, 1500);
             const newStatus = isOnline ? 'Online' : 'Offline';
             
-            // Actualizar solo si cambió
             if (newStatus !== device.status) {
                 console.log(`[MONITOR] ${device.name} (${device.ip}) cambio de ${device.status} a ${newStatus}`);
                 const lastSeen = isOnline ? new Date().toLocaleString() : device.last_seen;
                 db.run("UPDATE devices SET status = ?, last_seen = ? WHERE id = ?", [newStatus, lastSeen, device.id]);
             } else if (isOnline) {
-                 // Si sigue online, actualizar last_seen ocasionalmente
                  db.run("UPDATE devices SET last_seen = ? WHERE id = ?", [new Date().toLocaleString(), device.id]);
             }
         }));
@@ -614,7 +588,6 @@ const monitorDevices = async () => {
     }
 };
 
-// Monitor cada 10 segundos
 setInterval(monitorDevices, 10000);
 monitorDevices();
 
