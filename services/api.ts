@@ -220,6 +220,39 @@ export const LogService = {
   }
 };
 
+export const DatabaseService = {
+    getStatus: async (): Promise<{exists: boolean, size: number, tables: number, path: string, message?: string}> => {
+        try {
+            const res = await fetch(`${getApiUrl()}/db/status`);
+            return await res.json();
+        } catch (e) {
+            return { exists: false, size: 0, tables: 0, path: '', message: "No se puede conectar al backend" };
+        }
+    },
+    
+    init: async (): Promise<{success: boolean, message: string}> => {
+        try {
+            const res = await fetch(`${getApiUrl()}/db/init`, { method: 'POST' });
+            return await res.json();
+        } catch (e) { return { success: false, message: "Error en petición" }; }
+    },
+
+    backup: async (): Promise<{success: boolean, message: string}> => {
+        try {
+            const res = await fetch(`${getApiUrl()}/db/backup`, { method: 'POST' });
+            return await res.json();
+        } catch (e) { return { success: false, message: "Error en petición" }; }
+    },
+
+    optimize: async (): Promise<{success: boolean, message: string}> => {
+        try {
+            const res = await fetch(`${getApiUrl()}/db/optimize`, { method: 'POST' });
+            return await res.json();
+        } catch (e) { return { success: false, message: "Error en petición" }; }
+    }
+};
+
+
 export const SettingsService = {
   get: async (): Promise<SystemSettings> => {
     CURRENT_SETTINGS = loadSettings();

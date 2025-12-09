@@ -4,71 +4,85 @@ import bodyParser from 'body-parser';
 import ZKLib from 'node-zklib';
 import net from 'net';
 import sqlite3 from 'sqlite3';
+import fs from 'fs';
+import path from 'path';
 
 // NOTA: Recuerda ejecutar 'npm install' para las dependencias
 
 const app = express();
 const PORT = 3000;
+const DB_PATH = './sr-bio.db';
 
 app.use(cors());
 app.use(bodyParser.json());
 
 // --- DATABASE SETUP (SQLite) ---
-const db = new sqlite3.Database('./sr-bio.db', (err) => {
-    if (err) console.error('Error opening database:', err.message);
-    else console.log('[DB] Connected to SQLite database.');
-});
-
-// Inicializar Tablas
-db.serialize(() => {
-    // Tabla Dispositivos
-    db.run(`CREATE TABLE IF NOT EXISTS devices (
-        id TEXT PRIMARY KEY,
-        name TEXT,
-        ip TEXT,
-        port INTEGER,
-        model TEXT,
-        status TEXT,
-        last_seen TEXT,
-        mac TEXT,
-        image TEXT
-    )`);
-
-    // Tabla Usuarios
-    // user_id es el ID numérico del reloj (e.g. 1, 2)
-    // card es el número de tarjeta RFID
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-        uid INTEGER PRIMARY KEY AUTOINCREMENT,
-        device_user_id TEXT, 
-        name TEXT,
-        role TEXT,
-        password TEXT,
-        card TEXT,
-        device_id TEXT,
-        FOREIGN KEY(device_id) REFERENCES devices(id)
-    )`);
-
-    // Tabla Logs
-    db.run(`CREATE TABLE IF NOT EXISTS logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
-        device_id TEXT,
-        timestamp TEXT,
-        verify_type INTEGER,
-        status INTEGER,
-        UNIQUE(user_id, timestamp, device_id)
-    )`);
-
-    // Insertar dispositivo por defecto si no existe
-    db.get("SELECT count(*) as count FROM devices", [], (err, row) => {
-        if (row && row.count === 0) {
-            console.log("[DB] Seeding default device...");
-            db.run(`INSERT INTO devices (id, name, ip, port, model, status, last_seen, mac, image) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-                    ['1', 'ZKTeco Entrada', '192.168.1.201', 4370, 'ZK Terminal', 'Offline', '-', '00:00:00:00:00:00', 'https://cdn-icons-png.flaticon.com/512/9638/9638162.png']);
-        }
+// Función helper para conectar. Nota: new Database() crea el archivo si no existe.
+const connectDB = () => {
+    return new sqlite3.Database(DB_PATH, (err) => {
+        if (err) console.error('Error opening database:', err.message);
     });
-});
+};
+
+const db = connectDB();
+
+// --- DB INITIALIZATION LOGIC ---
+const initializeTables = (callback) => {
+    db.serialize(() => {
+        // Tabla Dispositivos
+        db.run(`CREATE TABLE IF NOT EXISTS devices (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            ip TEXT,
+            port INTEGER,
+            model TEXT,
+            status TEXT,
+            last_seen TEXT,
+            mac TEXT,
+            image TEXT
+        )`);
+
+        // Tabla Usuarios
+        // Añadimos restricción UNIQUE para evitar duplicados y permitir UPSERT seguro
+        db.run(`CREATE TABLE IF NOT EXISTS users (
+            uid INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_user_id TEXT, 
+            name TEXT,
+            role TEXT,
+            password TEXT,
+            card TEXT,
+            device_id TEXT,
+            FOREIGN KEY(device_id) REFERENCES devices(id),
+            UNIQUE(device_user_id, device_id)
+        )`);
+
+        // Tabla Logs
+        db.run(`CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            device_id TEXT,
+            timestamp TEXT,
+            verify_type INTEGER,
+            status INTEGER,
+            UNIQUE(user_id, timestamp, device_id)
+        )`);
+
+        // Insertar dispositivo por defecto SOLO si la tabla está vacía
+        db.get("SELECT count(*) as count FROM devices", [], (err, row) => {
+            if (!err && row && row.count === 0) {
+                console.log("[DB] Seeding default device...");
+                db.run(`INSERT INTO devices (id, name, ip, port, model, status, last_seen, mac, image) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+                        ['1', 'ZKTeco Entrada', '192.168.1.201', 4370, 'ZK Terminal', 'Offline', '-', '00:00:00:00:00:00', 'https://cdn-icons-png.flaticon.com/512/9638/9638162.png']);
+            }
+            if(callback) callback({ success: true, message: "Tablas inicializadas correctamente." });
+        });
+    });
+};
+
+// Inicializamos al arrancar por si acaso, pero el usuario puede reinicializar desde UI
+initializeTables(() => console.log('[DB] Database checks complete.'));
+
 
 // --- HELPERS DB ---
 const getDevicesFromDB = () => {
@@ -109,11 +123,10 @@ const monitorDevices = async () => {
             const status = isOnline ? 'Online' : 'Offline';
             const lastSeen = isOnline ? new Date().toLocaleString() : device.last_seen;
             
-            // Actualizar DB solo si cambia o para actualizar last_seen
             db.run("UPDATE devices SET status = ?, last_seen = ? WHERE id = ?", [status, lastSeen, device.id]);
         }
     } catch (e) {
-        console.error("Error monitoring devices:", e);
+        // Silent catch for monitoring
     }
 };
 
@@ -135,7 +148,63 @@ const withZkConnection = async (deviceConfig, actionCallback) => {
     }
 };
 
-// --- RUTAS DE API ---
+// --- RUTAS DE GESTIÓN DE BASE DE DATOS ---
+
+// DB 1: Estado
+app.get('/api/db/status', (req, res) => {
+    const exists = fs.existsSync(DB_PATH);
+    let size = 0;
+    if (exists) {
+        const stats = fs.statSync(DB_PATH);
+        size = stats.size;
+    }
+
+    if (!exists) {
+        return res.json({ exists: false, size: 0, tables: 0, message: "Archivo de base de datos no encontrado." });
+    }
+
+    // Contar tablas para verificar integridad básica
+    db.get("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", [], (err, row) => {
+        if (err) return res.json({ exists: true, size, tables: 0, error: err.message });
+        res.json({ 
+            exists: true, 
+            size, 
+            tables: row.count,
+            path: path.resolve(DB_PATH)
+        });
+    });
+});
+
+// DB 2: Inicializar (Crear Tablas)
+app.post('/api/db/init', (req, res) => {
+    initializeTables((result) => {
+        res.json(result);
+    });
+});
+
+// DB 3: Backup
+app.post('/api/db/backup', (req, res) => {
+    if (!fs.existsSync(DB_PATH)) return res.status(404).json({ success: false, message: "No hay base de datos para respaldar." });
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `./sr-bio-backup-${timestamp}.db`;
+    
+    fs.copyFile(DB_PATH, backupPath, (err) => {
+        if (err) return res.status(500).json({ success: false, message: "Error al crear respaldo: " + err.message });
+        res.json({ success: true, message: `Respaldo creado: ${backupPath}` });
+    });
+});
+
+// DB 4: Reparar/Optimizar
+app.post('/api/db/optimize', (req, res) => {
+    db.run("VACUUM;", (err) => {
+        if (err) return res.status(500).json({ success: false, message: "Error al optimizar: " + err.message });
+        res.json({ success: true, message: "Base de datos optimizada (VACUUM ejecutado)." });
+    });
+});
+
+
+// --- RUTAS DE API NEGOCIO ---
 
 // 1. GET DISPOSITIVOS
 app.get('/api/devices', async (req, res) => {
@@ -165,7 +234,7 @@ app.get('/api/devices/:id/users', (req, res) => {
         const users = rows.map(r => ({
             userId: r.device_user_id,
             name: r.name,
-            role: r.role === 'Admin' ? 14 : 0, // Mapeo inverso simple
+            role: r.role === 'Admin' ? 14 : 0, 
             card: r.card,
             uid: r.uid
         }));
@@ -215,22 +284,23 @@ app.post('/api/devices/:id/sync', async (req, res) => {
             // 1. Descargar Usuarios
             const users = await zk.getUsers();
             if (users && users.data) {
+                // Preparamos el insert. 
+                // IMPORTANTE: ON CONFLICT(device_user_id, device_id)
+                // Si existe, actualizamos contraseña y tarjeta (datos tecnicos), 
+                // PERO mantenemos el nombre y rol si ya existen en la DB (respetando la edición local).
+                
                 const stmt = db.prepare(`
                     INSERT INTO users (device_user_id, name, role, password, card, device_id) 
                     VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(uid) DO UPDATE SET 
+                    ON CONFLICT(device_user_id, device_id) DO UPDATE SET 
                         card = excluded.card,
                         password = excluded.password
+                        -- No actualizamos el nombre ni el rol para no perder ediciones locales
                 `);
                 
                 users.data.forEach(u => {
-                    db.get("SELECT uid FROM users WHERE device_user_id = ? AND device_id = ?", [u.userId, deviceId], (err, row) => {
-                        if (!row) {
-                            const roleName = u.role === 14 ? 'Admin' : 'User';
-                            db.run("INSERT INTO users (device_user_id, name, role, password, card, device_id) VALUES (?, ?, ?, ?, ?, ?)", 
-                                [u.userId, u.name, roleName, u.password, u.cardno, deviceId]);
-                        }
-                    });
+                    const roleName = u.role === 14 ? 'Admin' : 'User';
+                    stmt.run(u.userId, u.name, roleName, u.password, u.cardno, deviceId);
                 });
                 stmt.finalize();
             }
@@ -247,7 +317,7 @@ app.post('/api/devices/:id/sync', async (req, res) => {
             }
         });
 
-        res.json({ success: true, message: "Sincronización completada exitosamente." });
+        res.json({ success: true, message: "Sincronización completada. Datos locales preservados." });
 
     } catch (e) {
         console.error(e);
