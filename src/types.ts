@@ -30,13 +30,14 @@ export interface Device {
   ip: string;
   model: string;
   firmware: string;
-  status: 'Online' | 'Offline' | 'Syncing'; 
+  status: 'Online' | 'Offline' | 'Syncing' | string; // allow string for backend compatibility
   lastSeen: string;
   mac: string;
   gateway: string;
   subnet: string;
   image: string;
   port: number;
+  capacity?: ZkCapacity; // allow optional for diagnostics
 }
 
 export interface ZkCapacity {

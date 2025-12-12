@@ -1,13 +1,79 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import {
+    useReactTable,
+    getCoreRowModel,
+    flexRender,
+    createColumnHelper
+} from '@tanstack/react-table';
 import { Device, DeviceDiagnostics } from '../types';
 import { DeviceService } from '../services/api';
 
 const Devices: React.FC = () => {
-  const [devices, setDevices] = useState<Device[]>([]);
+    const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
 
-  // Estados Edición
+    // Estados Edición
+    // Modal borrar terminal
+    const [deleteModal, setDeleteModal] = useState<{ open: boolean, device: Device | null }>({ open: false, device: null });
+    // Columnas para TanStack Table
+    const columnHelper = createColumnHelper<Device>();
+    const columns = useMemo(() => [
+        columnHelper.accessor('name', {
+            header: 'Nombre',
+            cell: info => info.getValue(),
+        }),
+        columnHelper.accessor('ip', {
+            header: 'IP',
+            cell: info => <span className="font-mono">{info.getValue()}</span>,
+        }),
+        columnHelper.accessor('port', {
+            header: 'Puerto',
+            cell: info => <span className="font-mono">{info.getValue()}</span>,
+        }),
+        columnHelper.accessor('mac', {
+            header: 'MAC',
+            cell: info => <span className="font-mono">{info.getValue()}</span>,
+        }),
+        columnHelper.accessor('firmware', {
+            header: 'Firmware',
+            cell: info => <span className="font-mono">{info.getValue()}</span>,
+        }),
+        columnHelper.display({
+            id: 'actions',
+            header: '',
+            cell: ({ row }) => (
+                <div className="relative inline-block text-left">
+                    <button className="px-2 py-1 rounded hover:bg-slate-700" onClick={() => row.toggleExpanded()}>
+                        <span className="material-symbols-outlined">more_vert</span>
+                    </button>
+                    {row.getIsExpanded() && (
+                        <div className="absolute right-0 z-10 mt-2 w-40 origin-top-right rounded-md bg-[#192633] shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                            <div className="py-1">
+                                <button className="w-full px-4 py-2 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2" onClick={() => handleSyncInfo(row.original)}>
+                                    <span className="material-symbols-outlined text-base">schedule</span> Poner en hora
+                                </button>
+                                <button className="w-full px-4 py-2 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2" onClick={handleGetRealInfo}>
+                                    <span className="material-symbols-outlined text-base">refresh</span> Actualizar
+                                </button>
+                                <button className="w-full px-4 py-2 text-sm text-red-400 hover:bg-red-500/20 flex items-center gap-2" onClick={() => setDeleteModal({ open: true, device: row.original })}>
+                                    <span className="material-symbols-outlined text-base">delete</span> Borrar
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            ),
+        }),
+    ], []);
+    // Configuración de la tabla
+    const table = useReactTable({
+        data: devices,
+        columns,
+        getCoreRowModel: getCoreRowModel(),
+        getRowCanExpand: () => true,
+        state: {},
+    });
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', ip: '', port: 4370 });
 
@@ -17,19 +83,100 @@ const Devices: React.FC = () => {
   const [connectionStep, setConnectionStep] = useState<string>('');
   const [deviceResponse, setDeviceResponse] = useState<any | null>(null);
   
-  // Estado Mock Live Capture
-  const [liveCapture, setLiveCapture] = useState(false);
 
-  useEffect(() => {
-    const fetchDevices = async () => {
-      setLoading(true);
-      const data = await DeviceService.getAll();
-      setDevices(data);
-      if (data.length > 0) setSelectedDevice(data[0]);
-      setLoading(false);
+    // Estado Mock Live Capture
+    const [liveCapture, setLiveCapture] = useState(false);
+
+    // Modal alta terminal
+    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [addForm, setAddForm] = useState({ name: '', ip: '', port: 4370 });
+    const [addLoading, setAddLoading] = useState(false);
+    const [addError, setAddError] = useState('');
+    const [testResult, setTestResult] = useState<any | null>(null);
+    const [testLoading, setTestLoading] = useState(false);
+
+    const handleTestConnection = async () => {
+        setTestLoading(true);
+        setAddError('');
+        setTestResult(null);
+        try {
+            const test = await DeviceService.getDeviceInfo(addForm.ip, addForm.port);
+            if (!test.success || !test.data) {
+                setAddError('No se pudo conectar a la terminal. Verifica la IP y el puerto.');
+                setTestResult(null);
+            } else {
+                setTestResult(test.data);
+            }
+        } catch (e) {
+            setAddError('No se pudo conectar a la terminal. Verifica la IP y el puerto.');
+            setTestResult(null);
+        }
+        setTestLoading(false);
     };
-    fetchDevices();
-  }, []);
+
+    const handleAddDevice = async () => {
+        if (!testResult) {
+            setAddError('Primero debes probar la conexión y obtener los datos reales.');
+            return;
+        }
+        setAddLoading(true);
+        setAddError('');
+        try {
+            const res = await DeviceService.create({
+                ...addForm,
+                firmware: testResult.firmware || '',
+                mac: testResult.serialnumber || '',
+                model: testResult.platform || ''
+            });
+            if (res.success) {
+                setIsAddModalOpen(false);
+                setAddForm({ name: '', ip: '', port: 4370 });
+                setTestResult(null);
+                // Refrescar lista
+                setLoading(true);
+                const data = await DeviceService.getAll();
+                setDevices(data);
+                setLoading(false);
+            } else {
+                setAddError(res.message || 'Error al agregar terminal');
+            }
+        } catch (e) {
+            setAddError('Error de red');
+        }
+        setAddLoading(false);
+    };
+
+    useEffect(() => {
+        const fetchDevices = async () => {
+            setLoading(true);
+            const data = await DeviceService.getAll();
+            // Para cada dispositivo, obtener info real de la terminal
+            const enriched = await Promise.all(data.map(async (dev) => {
+                try {
+                    const res = await DeviceService.getDeviceInfo(dev.ip, dev.port || 4370);
+                    if (res.success && res.data) {
+                        return {
+                            ...dev,
+                            mac: res.data.serialnumber || '',
+                            firmware: res.data.firmware || '',
+                            model: res.data.platform || '',
+                            status: 'Online' as const,
+                            lastSeen: new Date().toLocaleString(),
+                            capacity: res.data.capacity || undefined,
+                        };
+                    } else {
+                        return { ...dev, status: 'Offline' as const };
+                    }
+                } catch {
+                    return { ...dev, status: 'Offline' as const };
+                }
+            }));
+            setDevices(enriched);
+            if (enriched.length > 0) setSelectedDevice(enriched[0]);
+            setLoading(false);
+        };
+        fetchDevices();
+    }, []);
 
   // Polling updates
   useEffect(() => {
@@ -119,7 +266,71 @@ const Devices: React.FC = () => {
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200/10 bg-[#111a22] px-8">
         <h1 className="text-lg font-bold text-white">Gestión de Dispositivos</h1>
         <div className="flex flex-1 items-center justify-end gap-6">
-          <button className="flex h-10 min-w-[84px] cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold text-white transition-colors hover:bg-primary/90">
+                    <button
+                        className="flex h-10 min-w-[84px] cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold text-white transition-colors hover:bg-primary/90"
+                        onClick={() => setIsAddModalOpen(true)}
+                    >
+                        {/* Modal alta terminal */}
+                        {isAddModalOpen && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                                <div className="w-full max-w-md rounded-xl border border-slate-700 bg-[#111a22] shadow-2xl overflow-hidden flex flex-col">
+                                    <div className="flex items-center justify-between border-b border-slate-700 bg-[#192633] px-6 py-4 shrink-0">
+                                        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                            <span className="material-symbols-outlined">add</span>
+                                            Nueva Terminal
+                                        </h3>
+                                        <button
+                                            onClick={() => setIsAddModalOpen(false)}
+                                            disabled={addLoading}
+                                            className="rounded-lg p-1 text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
+                                        >
+                                            <span className="material-symbols-outlined">close</span>
+                                        </button>
+                                    </div>
+                                    <form className="flex flex-col gap-4 p-6" onSubmit={e => { e.preventDefault(); handleAddDevice(); }}>
+                                        <input
+                                            className="rounded bg-slate-900 border border-slate-600 text-white px-2 py-2 text-sm font-bold"
+                                            value={addForm.name}
+                                            onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))}
+                                            placeholder="Nombre de la terminal"
+                                            required
+                                        />
+                                        <input
+                                            className="rounded bg-slate-900 border border-slate-600 text-white px-2 py-2 text-sm font-mono"
+                                            value={addForm.ip}
+                                            onChange={e => setAddForm(f => ({ ...f, ip: e.target.value }))}
+                                            placeholder="IP (ej: 192.168.1.100)"
+                                            required
+                                        />
+                                        <input
+                                            type="number"
+                                            className="rounded bg-slate-900 border border-slate-600 text-white px-2 py-2 text-sm font-mono"
+                                            value={addForm.port}
+                                            onChange={e => setAddForm(f => ({ ...f, port: parseInt(e.target.value) }))}
+                                            placeholder="Puerto (ej: 4370)"
+                                            required
+                                            min={1}
+                                            max={65535}
+                                        />
+                                        <button type="button" onClick={handleTestConnection} disabled={testLoading} className="px-3 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 font-bold mt-2">{testLoading ? 'Probando...' : 'Probar conexión'}</button>
+                                        {testResult && (
+                                            <div className="rounded-lg border border-green-500/20 bg-green-500/10 p-3 flex items-center gap-3 mt-2">
+                                                <span className="material-symbols-outlined text-green-500 text-2xl">check_circle</span>
+                                                <div>
+                                                    <h4 className="font-bold text-white">Conexión Exitosa</h4>
+                                                    <p className="text-xs text-green-200">La terminal respondió correctamente.</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {addError && <div className="text-red-400 text-sm">{addError}</div>}
+                                        <div className="flex gap-2 justify-end mt-2">
+                                            <button type="button" onClick={() => setIsAddModalOpen(false)} className="px-3 py-1 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30">Cancelar</button>
+                                            <button type="submit" disabled={addLoading || !testResult} className="px-3 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600 font-bold">{addLoading ? 'Agregando...' : 'Agregar'}</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        )}
             <span className="material-symbols-outlined">add</span>
             <span className="truncate">Añadir Dispositivo</span>
           </button>
@@ -131,45 +342,69 @@ const Devices: React.FC = () => {
       <div className="flex flex-1 overflow-hidden">
         {/* Device List Table */}
         <div className="flex flex-1 flex-col overflow-y-auto p-6">
-          <div className="flex flex-col gap-4 rounded-lg border border-slate-200/10 bg-[#111a22] p-4">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-300">
-                <thead className="text-xs uppercase text-slate-400">
-                  <tr>
-                    <th className="p-4" scope="col"><input type="checkbox" className="rounded border-slate-500 bg-[#233648] text-primary focus:ring-primary" /></th>
-                    <th className="px-6 py-3" scope="col">Estado (BD)</th>
-                    <th className="px-6 py-3" scope="col">Nombre</th>
-                    <th className="px-6 py-3" scope="col">IP</th>
-                    <th className="px-6 py-3" scope="col">Modelo</th>
-                    <th className="px-6 py-3" scope="col">Ultima Conexión</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <tr><td colSpan={6} className="p-8 text-center text-slate-400">Cargando dispositivos...</td></tr>
-                  ) : devices.map((dev) => (
-                    <tr 
-                        key={dev.id} 
-                        onClick={() => handleSelectDevice(dev)}
-                        className={`border-b border-slate-200/10 cursor-pointer transition-colors ${selectedDevice?.id === dev.id ? 'bg-primary/10' : 'hover:bg-slate-500/10'}`}
-                    >
-                        <td className="p-4"><input type="checkbox" checked={selectedDevice?.id === dev.id} readOnly className="rounded border-slate-500 bg-[#233648] text-primary focus:ring-primary" /></td>
-                        <td className="px-6 py-4">
-                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium ${dev.status === 'Online' ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
-                                <span className={`size-1.5 rounded-full ${dev.status === 'Online' ? 'bg-green-500' : 'bg-red-500'} ${dev.status === 'Online' ? 'animate-pulse' : ''}`}></span>
-                                {dev.status}
-                            </span>
-                        </td>
-                        <td className="px-6 py-4 font-medium text-white">{dev.name}</td>
-                        <td className="px-6 py-4 font-mono text-slate-400">{dev.ip}</td>
-                        <td className="px-6 py-4">{dev.model}</td>
-                        <td className="px-6 py-4 font-mono text-xs">{dev.lastSeen}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                    <div className="flex flex-col gap-4 rounded-lg border border-slate-200/10 bg-[#111a22] p-4">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-sm text-slate-300">
+                                <thead className="text-xs uppercase text-slate-400">
+                                    {table.getHeaderGroups().map(headerGroup => (
+                                        <tr key={headerGroup.id}>
+                                            {headerGroup.headers.map(header => (
+                                                <th key={header.id} className="px-4 py-2">{flexRender(header.column.columnDef.header, header.getContext())}</th>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </thead>
+                                <tbody>
+                                    {loading ? (
+                                        <tr><td colSpan={columns.length} className="p-8 text-center text-slate-400">Buscando terminales...</td></tr>
+                                    ) : devices.length === 0 ? (
+                                        <tr><td colSpan={columns.length} className="p-8 text-center text-slate-400">No hay terminales en el sistema</td></tr>
+                                    ) : devices.map((row, i) => {
+                                        const tableRow = table.getRowModel().rows[i];
+                                        return (
+                                            <tr key={row.id} className={`border-b border-slate-200/10 cursor-pointer transition-colors ${selectedDevice?.id === row.id ? 'bg-primary/10' : 'hover:bg-slate-500/10'}`}
+                                                onClick={() => handleSelectDevice(row)}>
+                                                {tableRow.getVisibleCells().map(cell => (
+                                                    <td key={cell.id} className="px-4 py-2">{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+                                                ))}
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {/* Modal de confirmación para borrar terminal */}
+                    {deleteModal.open && deleteModal.device && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                            <div className="w-full max-w-sm rounded-xl border border-slate-700 bg-[#111a22] shadow-2xl overflow-hidden flex flex-col">
+                                <div className="flex items-center justify-between border-b border-slate-700 bg-[#192633] px-6 py-4 shrink-0">
+                                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                        <span className="material-symbols-outlined text-red-400">warning</span>
+                                        Confirmar Borrado
+                                    </h3>
+                                    <button onClick={() => setDeleteModal({ open: false, device: null })} className="rounded-lg p-1 text-slate-400 hover:bg-slate-700 hover:text-white">
+                                        <span className="material-symbols-outlined">close</span>
+                                    </button>
+                                </div>
+                                <div className="p-6">
+                                    <p className="text-white mb-4">¿Seguro que deseas borrar la terminal <b>{deleteModal.device.name}</b> ({deleteModal.device.ip})?</p>
+                                    <div className="flex gap-2 justify-end">
+                                        <button onClick={() => setDeleteModal({ open: false, device: null })} className="px-3 py-1 bg-slate-700 text-white rounded text-xs hover:bg-slate-600">Cancelar</button>
+                                        <button onClick={async () => {
+                                            // Lógica de borrado aquí
+                                            await DeviceService.delete(deleteModal.device.id);
+                                            setDeleteModal({ open: false, device: null });
+                                            setLoading(true);
+                                            const data = await DeviceService.getAll();
+                                            setDevices(data);
+                                            setLoading(false);
+                                        }} className="px-3 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 font-bold">Aplicar</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
         </div>
 
         {/* Detail Panel */}
@@ -271,6 +506,51 @@ const Devices: React.FC = () => {
                       </div>
                   </div>
                 </div>
+                                {/* Tabla de información completa de la terminal */}
+                                <div className="flex flex-col rounded-lg bg-[#192633] p-4 mt-4">
+                                    <h4 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2">Información de la Terminal</h4>
+                                    <table className="w-full text-xs text-slate-300">
+                                        <tbody>
+                                            <tr>
+                                                <td className="py-1 pr-2 text-slate-400">Firmware</td>
+                                                <td className="py-1 font-mono text-white">{selectedDevice.firmware || 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 text-slate-400">MAC/Serial</td>
+                                                <td className="py-1 font-mono text-white">{selectedDevice.mac || 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 text-slate-400">Modelo</td>
+                                                <td className="py-1 font-mono text-white">{selectedDevice.model || 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 text-slate-400">Estado</td>
+                                                <td className="py-1 font-mono text-white">{selectedDevice.status || 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-1 pr-2 text-slate-400">Última conexión</td>
+                                                <td className="py-1 font-mono text-white">{selectedDevice.lastSeen || 'N/A'}</td>
+                                            </tr>
+                                            {/* Si hay campos de memoria, usuarios, logs, etc. */}
+                                            {selectedDevice.capacity && (
+                                                <>
+                                                    <tr>
+                                                        <td className="py-1 pr-2 text-slate-400">Usuarios</td>
+                                                        <td className="py-1 font-mono text-white">{selectedDevice.capacity.userCount} / {selectedDevice.capacity.userCapacity}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="py-1 pr-2 text-slate-400">Huellas</td>
+                                                        <td className="py-1 font-mono text-white">{selectedDevice.capacity.fingerprintCount} / {selectedDevice.capacity.fingerprintCapacity}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td className="py-1 pr-2 text-slate-400">Registros (Logs)</td>
+                                                        <td className="py-1 font-mono text-white">{selectedDevice.capacity.logCount} / {selectedDevice.capacity.logCapacity}</td>
+                                                    </tr>
+                                                </>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
             </div>
             </aside>
         )}
